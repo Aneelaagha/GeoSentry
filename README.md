@@ -16,6 +16,12 @@ confidence via a naive-Bayes update. Only above ~0.72 does GeoSentry speak. Ever
 below that threshold is logged quietly, so the one alert that does arrive is one
 worth trusting.
 
+Every zone also carries a Land Degradation Neutrality (LDN) score aligned to UN SDG
+Indicator 15.3.1 — a 0-100 composite of productivity trend, land-cover stability, and
+recent-detection history — plus an IPCC 2006-default carbon-loss estimate (tCO₂e) for
+every real detection, so a flagged event reads as an actual climate-relevant quantity,
+not just a z-score.
+
 ## Architecture
 
 ```
@@ -44,8 +50,9 @@ worth trusting.
  ┌───────────────────────────────────────────────────────────────────┐
  │ fusion/bayes.py                                                    │
  │  fuse_confidence(prior, evidence) → posterior via log-odds fusion  │
- │  evidence = {not_drought, nightlight_corroboration,                │
- │              adversarial_survives}                                 │
+ │  evidence = {llm_conf, viirs_z, rain_percentile, area_ha} -        │
+ │  each key optional; a missing/None viirs_z (VIIRS DNB lags real    │
+ │  time 1-2 months) just skips that likelihood ratio, never fakes it │
  └───────────────────────────────┬───────────────────────────────────┘
                                  │
                      posterior >= 0.72?
@@ -57,15 +64,22 @@ worth trusting.
            (status="silent")         alerts/twilio_stub.py → logs SMS
            logged, no alert          app/db.py: Detection(status="alerted")
                                       + Alert row
+                                             │
+                                             ▼
+                                   analysis/ldn.py
+                                   compute_ldn_score() - 0-100 composite, SDG 15.3.1
+                                   estimate_carbon_loss_tco2e() - IPCC 2006 AGB defaults
 
  ┌───────────────────────────────────────────────────────────────────┐
  │ FastAPI (app/main.py)                                              │
- │  GET  /health  /zones  /detections  /alerts  /stats  /calibration  │
+ │  GET  /health  /zones  /detections  /alerts  /silent-log           │
+ │  GET  /stats  /calibration  /ldn/{zone_id}  /ldn/summary           │
  │  POST /run-once?as_of=YYYY-MM-DD  → runs scripts/run_once.py       │
  └───────────────────────────────┬───────────────────────────────────┘
                                  ▼
                    web/index.html (vanilla JS, single file)
-                   zone list · detections · confidence bars · alerts
+                   satellite map w/ LDN-tinted zone polygons · stats ·
+                   calibration · alert log · detection stream · silent log
 ```
 
 **Real-Claude example:** On 2024-09-15 in Novo Progresso, the pipeline detected 1,835 hectares
@@ -105,7 +119,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env        # SYNTHETIC_MODE=true works with zero credentials
 
-python scripts/seed_zones.py     # inserts 3 demo AOIs: mining, logging, control
+python scripts/seed_zones.py     # inserts 5 demo AOIs: 2 mining, 2 logging, 1 control
 python scripts/run_once.py       # runs the full pipeline once, prints results
 
 python -m uvicorn app.main:app --reload   # then open http://127.0.0.1:8000
@@ -118,26 +132,72 @@ confidence gate and pushes an ntfy alert.
 
 ## Demo features
 
-- **Zone map** — a Leaflet map (CartoDB dark basemap) above the zone list, with
-  one circle marker per zone colored by role (mining `#ff8c42`, logging
-  `#f2c14e`, control `#7fb069`) and sized by the zone's last detected area
-  (6-30px). Click a marker for cause, confidence, area, and timestamp. A "Fit
-  all zones" button re-frames the map; markers update in place after **Fire
-  demo alert** rather than rebuilding the map.
-  *Screenshot: zone map with colored markers on a dark basemap.*
+The dashboard is a clean, white, NASA-Earth-Observatory-style layout (Inter +
+IBM Plex Mono, generous whitespace) — a two-column grid (map left, Overview /
+Calibration / Alert Log right, detection stream full-width below) that stacks
+to one column under 1000px. Everything on the page is backed by the routes
+above; nothing is scripted or hardcoded UI state.
+
+- **Zone map** — Esri World Imagery satellite basemap under a light wash, with
+  each zone rendered as its *real* AOI polygon (`Zone.aoi_geojson`, the same
+  geometry every GEE query uses — not a placeholder shape), tinted by that
+  zone's live LDN score (red `<40` · amber `40-69` · green `≥70`, both border
+  and fill), plus a small reticle-marked circle on the centroid sized by last
+  detected area. Click any zone (polygon or marker) for cause, confidence,
+  area, and timestamp.
+  - **Zone labels** — a permanent `Name · LDN` pill next to each marker at
+    world/regional zoom, auto-hidden past zoom 8 once the polygons themselves
+    are legible.
+  - **Amazon / Global view** — the map defaults to the Amazon basin (3 of 5
+    zones sit there); a single top-right pill toggles to a fit-all-zones
+    global view and back, always labeled with the view a click switches *to*.
+  - **Country-name hover** — hovering the map shows the country under the
+    cursor, resolved client-side via a real point-in-polygon lookup against
+    public-domain Natural Earth boundaries (no API key, no per-move network
+    call).
+  *Screenshot: satellite map with LDN-tinted zone polygons and the Amazon-view
+  legend.*
+
+- **LDN score & carbon loss (SDG 15.3.1)** — the Overview card's headline
+  number is the live average LDN score across all zones, color-coded by the
+  same red/amber/green thresholds as the map. Every real detection also
+  carries an estimated CO₂-equivalent loss (IPCC 2006 AGB defaults by NDVI
+  baseline), shown on its card and summed across every suppressed calibration
+  candidate ("estimated avoided carbon loss").
+
+- **Calibration card** — a real historical backtest (25 windows swept across
+  all 5 zones, reclassified by live Claude calls, not the synthetic
+  fallback), shown zone-name-first with a verdict chip; the top 4 flagged
+  candidates by default, with a "view all" toggle for the rest.
+
+- **Detection stream** — filtered to real events (a real affected area or a
+  3-sigma indicator) rather than routine no-change passes, which collapse
+  into a single muted "N additional no-change observations in silent log"
+  link. Each card shows real before/after Sentinel-2 thumbnails, a confidence
+  bar, and a mono metadata line (cause, driving z-score, area, CO₂e).
+
+- **Silent log** — a slide-in panel (▸ *View silent log*) listing every
+  detection that stayed silent, each with a real, computed reason (ambiguous
+  LLM confidence, a conflicting rainfall signal, VIIRS unavailable that
+  month, etc.) — not a canned message.
 
 ## Modes
 
 - `SYNTHETIC_MODE=true` (default): `gee/*` and `llm/*` return deterministic fake
   data keyed off zone name/type, so the whole pipeline — including the "silent vs.
   alerted" split — is demoable offline with no API keys at all.
-- `SYNTHETIC_MODE=false`: requires `GEE_SERVICE_ACCOUNT` +
-  `GEE_SERVICE_ACCOUNT_KEY_PATH` and `ANTHROPIC_API_KEY`. Every module still falls
-  back to synthetic behavior on any credential or API failure, so a flaky demo
-  network never kills the presentation.
+- `SYNTHETIC_MODE=false`: requires `GOOGLE_APPLICATION_CREDENTIALS` (path to a GEE
+  service-account key JSON) + `GEE_PROJECT`, and `ANTHROPIC_API_KEY` for real Claude
+  calls (falls back to a deterministic synthetic classifier if unset). Every module
+  still falls back to synthetic behavior on any credential or API failure, so a
+  flaky demo network never kills the presentation.
 
 ## What we'd do with more time
 
 - Replace the LLM with a fine-tuned classifier once labelled data exists. The LLM is the
   right starting point because it works on day one without training data, but a
   purpose-built model trained on confirmed events would be more consistent across cases.
+- Compute a real NDVI trend slope for the LDN score's productivity sub-indicator. Today
+  it's a documented neutral 50 (see `analysis/ldn.py`) because the pipeline only ever
+  pools multi-year baselines down to a single median+MAD, discarding the year-by-year
+  series a real trend needs — filling that in is a scoped GEE addition, not a redesign.
