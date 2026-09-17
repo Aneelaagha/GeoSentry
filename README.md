@@ -21,7 +21,7 @@ worth trusting.
 ```
                          ┌─────────────────────────────┐
                          │   Google Earth Engine (GEE)  │
-                         │  Sentinel-2 SR · Landsat 8/9 │
+                         │  Sentinel-2 SR Harmonized    │
                          │  VIIRS DNB monthly · CHIRPS  │
                          └───────────────┬───────────────┘
                                          │
@@ -68,6 +68,35 @@ worth trusting.
                    zone list · detections · confidence bars · alerts
 ```
 
+**Real-Claude example:** On 2024-09-15 in Novo Progresso, the pipeline detected 1,835 hectares
+of canopy loss at -5.12 sigma NDVI. Claude classified the cause as agricultural expansion at 85%
+confidence, drawing on real-world knowledge of the region as a documented deforestation frontier.
+The rainfall data independently conflicted with that classification, and the fused posterior
+remained below the 0.72 gate. The system stayed silent. This is the product: even an
+85%-confident LLM classification is not sufficient on its own. Independent physical evidence
+must corroborate it.
+
+## What's real and what's simulated
+
+With `SYNTHETIC_MODE=false` and a real `ANTHROPIC_API_KEY` (verified end-to-end - all four
+flagged calibration candidates were classified by real Claude, not the synthetic fallback),
+everything in the pipeline is real:
+
+- Google Earth Engine authentication and computation
+- Sentinel-2 SR Harmonized, VIIRS DNB monthly, and CHIRPS daily ingestion
+- Baseline computation (pooled per-pixel median + MAD across the trailing 3 sampled years, per
+  zone per calendar month)
+- Z-score change detection against those baselines (3-sigma gate)
+- LLM cause classification and adversarial verification via Claude Sonnet 4.5 (real API calls)
+- Bayesian confidence fusion with magnitude-scaled likelihood ratios
+- Carbon loss estimation using IPCC 2006 AGB defaults
+- SQLite persistence, alerting templates
+
+`SYNTHETIC_MODE=true` (the default, zero-credential path) swaps GEE/Claude calls for
+deterministic synthetic data keyed off zone name/type, so the same detect → classify → fuse →
+gate pipeline is demoable offline. Every real-path module also falls back to synthetic on any
+credential or API failure, so a flaky network never kills a live demo.
+
 ## Quickstart
 
 ```bash
@@ -106,3 +135,9 @@ confidence gate and pushes an ntfy alert.
   `GEE_SERVICE_ACCOUNT_KEY_PATH` and `ANTHROPIC_API_KEY`. Every module still falls
   back to synthetic behavior on any credential or API failure, so a flaky demo
   network never kills the presentation.
+
+## What we'd do with more time
+
+- Replace the LLM with a fine-tuned classifier once labelled data exists. The LLM is the
+  right starting point because it works on day one without training data, but a
+  purpose-built model trained on confirmed events would be more consistent across cases.

@@ -1,0 +1,8 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+sqlmodel>=0.0.22
+pydantic-settings>=2.4
+earthengine-api>=1.0
+anthropic>=0.34
+requests>=2.32
+python-dotenv>=1.0

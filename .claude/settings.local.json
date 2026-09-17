@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip show *)",
+      "Bash(curl -s localhost:8000/zones)",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s -X POST localhost:8000/demo/fire-alert)",
+      "Bash(curl -s localhost:8000/)",
+      "Bash(curl -s localhost:8000/health)",
+      "Bash(curl -s \"localhost:8000/silent-log?limit=50\")",
+      "Bash(curl -s localhost:8000/detections)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(len\\(d\\), 'detections, statuses:', [x['status'] for x in d]\\)\")",
+      "Bash(python3 -c \"import json,sys; print\\(len\\(json.load\\(sys.stdin\\)\\), 'zones'\\)\")",
+      "Bash(curl -sf localhost:8000/health)",
+      "Read(//Users/aneelaagha/.claude/skills/**)",
+      "Bash(find / -maxdepth 6 -iname \"*chromium*\")",
+      "Bash(npx playwright *)",
+      "Bash(mkdir -p /private/tmp/claude-501/-Users-aneelaagha-geosentry/f6f6c5ec-e856-4124-a7f2-f472991ab131/scratchpad/pw-check)",
+      "Bash(npm init *)",
+      "Bash(npm install *)",
+      "Bash(echo \"EXIT=$?\")",
+      "Read(//Users/aneelaagha/Library/Caches/ms-playwright/**)",
+      "Read(//Users/aneelaagha/**)",
+      "Bash(node shot.js)",
+      "Bash(node close-behaviors.js)"
+    ]
+  }
+}

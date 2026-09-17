@@ -1,0 +1,57 @@
+{
+  "generated_at": "2026-09-17T05:04:43.219475Z",
+  "total_windows_tested": 25,
+  "total_zones_tested": 5,
+  "total_candidates_flagged": 4,
+  "total_alerts_fired": 0,
+  "windows": [
+    {
+      "as_of": "2024-10-15",
+      "zone": "Garamba Reference Plot",
+      "indicator": "ndvi",
+      "z": -4.0567,
+      "area_ha": 55.33,
+      "llm_cause": "artifact",
+      "llm_conf": 0.78,
+      "posterior": 0.2538,
+      "tier": "silent",
+      "suppression_reason": "Fused confidence 25% below 72% gate"
+    },
+    {
+      "as_of": "2024-09-15",
+      "zone": "Novo Progresso Frontier",
+      "indicator": "ndvi",
+      "z": -5.1246,
+      "area_ha": 1834.9,
+      "llm_cause": "ag_expansion",
+      "llm_conf": 0.85,
+      "posterior": 0.1975,
+      "tier": "silent",
+      "suppression_reason": "Rainfall 0pct - drought signal conflicts with extraction hypothesis"
+    },
+    {
+      "as_of": "2024-10-15",
+      "zone": "Novo Progresso Frontier",
+      "indicator": "bsi",
+      "z": 4.5307,
+      "area_ha": 1156.99,
+      "llm_cause": "ag_expansion",
+      "llm_conf": 0.85,
+      "posterior": 0.1731,
+      "tier": "silent",
+      "suppression_reason": "VIIRS flat (+0.54z) - no extraction-like night activity to corroborate"
+    },
+    {
+      "as_of": "2025-09-15",
+      "zone": "Yanomami Mining Belt",
+      "indicator": "ndvi",
+      "z": -3.5722,
+      "area_ha": 946.2,
+      "llm_cause": "mining",
+      "llm_conf": 0.82,
+      "posterior": 0.0772,
+      "tier": "silent",
+      "suppression_reason": "VIIRS flat (-0.13z) - no extraction-like night activity to corroborate"
+    }
+  ]
+}

@@ -1,0 +1,1140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GeoSentry</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap"
+  rel="stylesheet"
+/>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f8f9fa;
+    --panel: #ffffff;
+    --border: #e8eaed;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+    --text: #1a1d21;
+    --text-secondary: #5f6368;
+    --text-muted: #9aa0a6;
+    --accent: #2d6a4f;
+    --accent-bg: #e8f3ed;
+    --amber: #d97706;
+    --amber-bg: #fef3c7;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --blue: #1d4ed8;
+    --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+
+  body {
+    font-family: var(--font-sans); font-size: 14px; line-height: 1.5;
+    background: var(--bg); color: var(--text);
+    margin: 0; padding: 1.5rem 2rem 3rem; max-width: 1440px; margin-inline: auto;
+  }
+
+  .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .is-hidden { display: none !important; }
+
+  /* --- Card shell, shared by every panel -------------------------------------------------- */
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: var(--shadow); padding: 20px;
+  }
+  .card-title {
+    font-family: var(--font-sans); font-weight: 600; font-size: 14px; color: var(--text);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .info-icon { color: var(--text-muted); font-size: 12px; cursor: default; }
+  .card-subtitle { font-size: 12px; color: var(--text-secondary); margin-top: 3px; }
+
+  /* --- Header ------------------------------------------------------------------------------ */
+  .page-header {
+    display: flex; align-items: center; justify-content: space-between; gap: 1.5rem;
+    padding-bottom: 1.25rem; flex-wrap: wrap;
+  }
+  .brand h1 {
+    margin: 0; font-family: var(--font-sans); font-weight: 600; font-size: 18px; color: var(--text);
+  }
+  .brand .tagline { margin: .2rem 0 0; font-size: 13px; color: var(--text-secondary); }
+
+  .header-right { display: flex; align-items: center; gap: .85rem; flex-wrap: wrap; }
+  .header-status { display: flex; align-items: center; gap: .4rem; font-size: 13px; color: var(--accent); white-space: nowrap; }
+  .header-status.demo { color: var(--amber); }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+  .header-status.demo .status-dot { background: var(--amber); }
+
+  .run-pill {
+    display: flex; align-items: center; gap: .4rem; background: #fff; border: 1px solid var(--border);
+    border-radius: 6px; padding: .3rem .3rem .3rem .7rem; margin: 0;
+  }
+  .run-date-input {
+    font-family: var(--font-mono); font-size: 13px; background: transparent; border: none; color: var(--text);
+    padding: .15rem 0;
+  }
+  .run-date-input:focus { outline: none; }
+  .run-date-input:disabled { color: var(--text-muted); }
+  .run-submit {
+    font-family: var(--font-sans); font-size: 13px; font-weight: 500; padding: 8px 16px; border-radius: 6px;
+    background: var(--accent); color: #fff; border: none; cursor: pointer; white-space: nowrap;
+  }
+  .run-submit:hover:not(:disabled) { background: #235942; }
+  .run-submit:disabled { background: #e8eaed; color: var(--text-muted); cursor: not-allowed; }
+  .demo-chip {
+    font-size: 12px; color: var(--amber); background: var(--amber-bg); border: 1px solid #fde68a;
+    padding: .3rem .65rem; border-radius: 999px; white-space: nowrap;
+  }
+  .run-toast {
+    font-size: 12px; color: var(--red); background: var(--red-bg); border: 1px solid #fecaca;
+    padding: .3rem .65rem; border-radius: 999px;
+  }
+  .spinner {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    border: 2px solid rgba(255, 255, 255, .4); border-top-color: #fff;
+    animation: spin 700ms linear infinite; vertical-align: -1px; margin-right: .35rem;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* --- Two-column dashboard grid --------------------------------------------------------- */
+  .dashboard { display: grid; grid-template-columns: 1fr 380px; gap: 20px; align-items: start; }
+  @media (max-width: 1000px) { .dashboard { grid-template-columns: 1fr; } }
+
+  .right-col { display: flex; flex-direction: column; gap: 20px; }
+  @media (min-width: 1001px) {
+    .right-col { max-height: calc(100vh - 140px); overflow-y: auto; position: sticky; top: 1rem; }
+  }
+
+  /* --- Stats card ------------------------------------------------------------------------- */
+  .stat-row {
+    display: flex; align-items: baseline; justify-content: space-between; padding: 7px 0;
+  }
+  .stat-row.ldn-row { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 12px; }
+  .stat-label {
+    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: var(--text-secondary);
+  }
+  .stat-value { font-family: var(--font-mono); font-size: 20px; font-weight: 500; color: var(--text); }
+  .stat-value.big { font-size: 28px; }
+  .ldn-green { color: var(--accent); }
+  .ldn-amber { color: var(--amber); }
+  .ldn-red { color: var(--red); }
+  .ldn-sub { font-size: 11px; color: var(--text-muted); margin-top: -2px; }
+
+  /* --- Chips (verdict / tier / role) ------------------------------------------------------ */
+  .chip {
+    display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .03em; font-family: var(--font-sans); white-space: nowrap;
+  }
+  .chip-silent { background: #f1f3f4; color: var(--text-secondary); }
+  .chip-uncertain { background: var(--amber-bg); color: var(--amber); }
+  .chip-alerted, .chip-classified { background: var(--accent-bg); color: var(--accent); }
+  .chip-mining { background: #fed7aa; color: #9a5b13; }
+  .chip-logging { background: #fef3c7; color: #92720d; }
+  .chip-control { background: var(--accent-bg); color: var(--accent); }
+  .chip-live { background: var(--accent-bg); color: var(--accent); }
+  .chip-cause { background: var(--amber-bg); color: var(--amber); }
+
+  /* --- Map card ---------------------------------------------------------------------------- */
+  .map-wrap { position: relative; }
+  #map {
+    height: calc(100vh - 220px); min-height: 500px; border-radius: 6px; overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  #fit-zones-btn {
+    position: absolute; top: 12px; right: 12px; z-index: 500;
+    background: #fff; color: var(--text); border: 1px solid var(--border);
+    padding: 7px 14px; border-radius: 999px; font-size: 13px; font-weight: 500;
+    font-family: var(--font-sans); box-shadow: var(--shadow); cursor: pointer;
+  }
+  #fit-zones-btn:hover { background: #fafbfc; }
+  .leaflet-popup-content-wrapper { background: #fff; color: var(--text); border-radius: 6px; }
+  .leaflet-popup-content { font-family: var(--font-sans); font-size: 13px; }
+  .leaflet-popup-tip { background: #fff; }
+
+  /* Country-name tooltip that follows the cursor while hovering the map - see findCountryAt().
+     Dark pill (not the light theme's usual chrome) so it reads clearly over any basemap terrain. */
+  .country-hover-label {
+    position: absolute; z-index: 650; pointer-events: none;
+    background: rgba(26, 29, 33, 0.85); color: #fff; font-family: var(--font-sans);
+    font-size: 12px; font-weight: 500; padding: 4px 9px; border-radius: 5px; white-space: nowrap;
+  }
+
+  /* Permanent per-zone label (name + live LDN score), shown at world/regional zoom and hidden
+     once the user zooms in far enough to read the polygons themselves - see
+     updateZoneLabelVisibility(). Leaflet's own tooltip arrow is suppressed (::before), per spec. */
+  .zone-label-tooltip {
+    background: rgba(255, 255, 255, 0.9) !important; color: #1a1d21; font-family: var(--font-sans);
+    font-size: 11px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border) !important;
+    box-shadow: none !important;
+  }
+  .zone-label-tooltip::before { display: none; }
+
+  .map-legend {
+    position: absolute; left: 12px; bottom: 12px; z-index: 500;
+    background: rgba(255, 255, 255, 0.95); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 10px; font-family: var(--font-sans); font-size: 11px; color: var(--text-secondary);
+    box-shadow: var(--shadow);
+  }
+  .legend-title {
+    font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--text-muted); margin-bottom: 4px;
+  }
+  .legend-row { display: flex; align-items: center; gap: 6px; padding: 1.5px 0; white-space: nowrap; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+
+  /* Reticle: 4 short pixel-fixed ticks on the polygon centroid, colored to match the LDN border. */
+  .zone-reticle { position: relative; }
+  .zone-reticle .tick { position: absolute; }
+  .zone-reticle .tick-n { width: 1px; height: 6px; left: -.5px; top: -18px; }
+  .zone-reticle .tick-s { width: 1px; height: 6px; left: -.5px; top: 12px; }
+  .zone-reticle .tick-e { width: 6px; height: 1px; left: 12px; top: -.5px; }
+  .zone-reticle .tick-w { width: 6px; height: 1px; left: -18px; top: -.5px; }
+
+  /* --- Calibration card -------------------------------------------------------------------- */
+  .calibration-summary { font-size: 12px; color: var(--text-secondary); margin: 4px 0 12px; }
+  .calibration-row { padding: 12px 0; border-bottom: 1px solid #f1f3f4; }
+  .calibration-row:last-of-type { border-bottom: none; }
+  .calibration-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .calibration-zone { font-size: 13px; color: var(--text); font-weight: 600; }
+  .calibration-meta {
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary);
+    margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .calibration-carbon-line { font-size: 12px; color: var(--text-secondary); margin-top: 12px; }
+  .calibration-view-all {
+    display: inline-block; margin-top: 10px; font-size: 12px; color: var(--accent); text-decoration: none; cursor: pointer;
+  }
+  .calibration-view-all:hover { text-decoration: underline; }
+
+  /* --- Alert log --------------------------------------------------------------------------- */
+  .alert-row { padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .alert-row:last-child { border-bottom: none; }
+  .alert-meta { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); margin-bottom: 2px; }
+  .empty-note { color: var(--text-muted); font-style: italic; text-align: center; padding: 1.5rem 0; font-size: 13px; }
+
+  /* --- Detection stream ---------------------------------------------------------------------*/
+  .stream-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; flex-wrap: wrap; gap: 8px; }
+  .stream-header-left { display: flex; align-items: center; gap: 8px; }
+  .silent-log-link { font-size: 13px; color: var(--accent); text-decoration: none; cursor: pointer; }
+  .silent-log-link:hover { text-decoration: underline; }
+
+  .detection-card {
+    display: flex; gap: 16px; padding: 16px 4px; border-bottom: 1px solid var(--border);
+  }
+  .detection-card:hover { background: #fafbfc; }
+  .detection-card:last-child { border-bottom: none; }
+  .detection-thumbs { display: flex; gap: 6px; flex: none; }
+  img.thumb-img, div.thumb-img {
+    width: 80px; height: 80px; border-radius: 6px; border: 1px solid var(--border); overflow: hidden; display: block;
+  }
+  div.thumb-img svg { display: block; width: 80px; height: 80px; }
+  .thumb-label { font-size: 9px; color: var(--text-muted); margin-top: 3px; text-align: center; font-family: var(--font-mono); }
+  .detection-body { flex: 1; min-width: 0; }
+  .detection-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+  .detection-head strong { font-size: 14px; font-weight: 600; color: var(--text); }
+  .detection-cause { text-transform: capitalize; }
+  .detection-stats {
+    font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); margin-bottom: 6px;
+  }
+  .detection-reasoning {
+    font-size: 13px; color: var(--text-secondary); margin: 0;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+
+  .conf-row { display: flex; align-items: center; gap: .5rem; margin: 4px 0 6px; max-width: 220px; }
+  .conf-bar { flex: 1; height: 4px; border-radius: 2px; background: #f1f3f4; overflow: hidden; }
+  .conf-fill { height: 100%; border-radius: 2px; background: var(--accent); }
+  .conf-fill.tier-silent { background: #9aa0a6; }
+  .conf-fill.tier-uncertain { background: var(--amber); }
+  .conf-value { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); flex: none; min-width: 32px; text-align: right; }
+
+  .no-change-note {
+    margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--border);
+    font-size: 12px; color: var(--text-muted); text-align: center; cursor: pointer;
+  }
+  .no-change-note:hover { color: var(--text-secondary); text-decoration: underline; }
+
+  /* --- Silent log slide-in panel ------------------------------------------------------------*/
+  #silent-log-panel {
+    position: fixed; top: 0; right: 0; bottom: 0; width: 420px;
+    background: #fff; border-left: 1px solid var(--border);
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.08);
+    transition: transform 250ms ease; transform: translateX(0);
+    display: flex; flex-direction: column; z-index: 1000;
+    font-family: var(--font-sans);
+  }
+  @media (min-width: 1200px) { #silent-log-panel { width: 440px; } }
+  #silent-log-panel.hidden { transform: translateX(100%); }
+  .silent-log-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); flex: none;
+  }
+  .silent-log-header h2 { margin: 0; font-size: 14px; font-weight: 600; color: var(--text); }
+  .silent-log-close {
+    background: transparent; color: var(--text-secondary); padding: .2rem .55rem;
+    font-size: 1rem; border-radius: 6px; line-height: 1; border: none; cursor: pointer;
+  }
+  .silent-log-close:hover { background: #f1f3f4; color: var(--text); }
+  .silent-log-body { flex: 1; overflow-y: auto; padding: 1rem 1.25rem; }
+  .silent-log-footer {
+    flex: none; padding: .75rem 1.25rem; border-top: 1px solid var(--border);
+    font-size: 11px; color: var(--text-muted);
+  }
+  .silent-card {
+    background: #fafbfc; border: 1px solid var(--border); border-radius: 8px;
+    padding: .75rem .9rem; margin-bottom: .75rem;
+  }
+  .silent-card:last-child { margin-bottom: 0; }
+  .silent-card-top { display: flex; align-items: center; justify-content: space-between; gap: .5rem; flex-wrap: wrap; }
+  .silent-card-top strong { font-size: 13px; }
+  .silent-why { font-style: italic; font-size: 12px; color: var(--text-secondary); margin-top: .5rem; }
+  .silent-card-bottom { display: flex; justify-content: flex-end; margin-top: .4rem; }
+  .silent-timestamp { font-size: 11px; color: var(--text-muted); }
+</style>
+</head>
+<body>
+  <div class="page-header">
+    <div class="brand">
+      <h1>GeoSentry</h1>
+      <p class="tagline">Satellite land-degradation monitor</p>
+    </div>
+    <div class="header-right">
+      <span class="header-status" id="header-status">
+        <span class="status-dot"></span>
+        <span id="status-text">&hellip;</span>
+      </span>
+      <form id="run-form" class="run-pill">
+        <input type="date" id="run-date" class="run-date-input mono" />
+        <button type="submit" id="run-btn" class="run-submit">Run pipeline &rarr;</button>
+      </form>
+      <span id="demo-mode-chip" class="demo-chip is-hidden">Demo mode &mdash; live runs disabled</span>
+      <span id="run-toast" class="run-toast is-hidden"></span>
+    </div>
+  </div>
+
+  <div class="dashboard">
+    <div class="card map-card">
+      <div class="map-wrap">
+        <div id="map"></div>
+        <button id="fit-zones-btn">Global view</button>
+        <div id="country-hover-label" class="country-hover-label is-hidden"></div>
+        <div class="map-legend">
+          <div class="legend-title">LDN score</div>
+          <div class="legend-row"><span class="legend-dot" style="background:#dc2626"></span><span>&lt;40 degraded</span></div>
+          <div class="legend-row"><span class="legend-dot" style="background:#d97706"></span><span>40&ndash;69 stable</span></div>
+          <div class="legend-row"><span class="legend-dot" style="background:#2d6a4f"></span><span>&ge;70 healthy</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="right-col">
+      <div class="card">
+        <div class="card-title">Overview</div>
+        <div class="stat-row">
+          <span class="stat-label">Zones monitored</span>
+          <span class="stat-value mono" id="stat-zones">&ndash;</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Windows evaluated</span>
+          <span class="stat-value mono" id="stat-windows">&ndash;</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Alerts fired</span>
+          <span class="stat-value mono" id="stat-alerts">&ndash;</span>
+        </div>
+        <div class="stat-row ldn-row">
+          <span>
+            <span class="stat-label" style="display:block;">LDN score</span>
+            <span class="ldn-sub">SDG Indicator 15.3.1 &middot; average across zones</span>
+          </span>
+          <span class="stat-value big mono" id="stat-ldn">&ndash;</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Calibration <span class="info-icon" title="Real historical backtest: every flagged candidate and why its posterior did or didn't clear the alert gate.">&#9432;</span></div>
+        <div class="calibration-summary" id="calibration-summary">Loading&hellip;</div>
+        <div id="calibration-rows"></div>
+        <div id="calibration-carbon-line" class="calibration-carbon-line is-hidden"></div>
+        <a href="#" id="calibration-view-all" class="calibration-view-all is-hidden">View all 0 flagged candidates &rarr;</a>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Alert Log</div>
+        <div id="alerts"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top: 20px;">
+    <div class="stream-header">
+      <div class="stream-header-left">
+        <span class="card-title">Detection Stream</span>
+        <span class="chip chip-live">live</span>
+      </div>
+      <a href="#" id="silent-log-link" class="silent-log-link">View silent log &rarr;</a>
+    </div>
+    <div id="detections"></div>
+  </div>
+
+  <div id="silent-log-panel" class="hidden" aria-hidden="true">
+    <div class="silent-log-header">
+      <h2 id="silent-log-title">Silent log &mdash; 0 entries below threshold</h2>
+      <button id="silent-log-close" class="silent-log-close" aria-label="Close silent log">&#10005;</button>
+    </div>
+    <div id="silent-log-body" class="silent-log-body"></div>
+    <div class="silent-log-footer">These detections stayed silent by design.</div>
+  </div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+async function fetchJSON(path, options) {
+  const res = await fetch(path, options);
+  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+  return res.json();
+}
+
+function pad2(n) { return String(n).padStart(2, "0"); }
+
+const ROLE_CHIP_CLASS = { mining: "chip-mining", logging: "chip-logging", control: "chip-control" };
+function zoneBadge(role) { return `<span class="chip ${ROLE_CHIP_CLASS[role] || "chip-control"}">${role}</span>`; }
+
+// tier ('silent' | 'uncertain' | 'classified', from fusion.bayes.classify_alert_tier) drives the
+// chip, not status ('silent' | 'alerted') alone - an 'uncertain' detection has status='alerted'
+// (it did fire) but should read as amber/uncertain, not the same green as a confident alert.
+function detectionChip(d) {
+  if (d.tier === "uncertain") return `<span class="chip chip-uncertain">uncertain</span>`;
+  return `<span class="chip ${d.status === "alerted" ? "chip-alerted" : "chip-silent"}">${d.status}</span>`;
+}
+function confFillTierClass(tier) {
+  if (tier === "uncertain") return "tier-uncertain";
+  if (tier === "silent") return "tier-silent";
+  return "";
+}
+function confRow(pct, tier) {
+  return `
+    <div class="conf-row">
+      <div class="conf-bar"><div class="conf-fill ${confFillTierClass(tier)}" style="width:${pct.toFixed(0)}%"></div></div>
+      <span class="conf-value mono">${pct.toFixed(0)}%</span>
+    </div>
+  `;
+}
+
+// --- Header stats + live status ---------------------------------------------
+async function loadStats() {
+  const statusText = document.getElementById("status-text");
+  try {
+    const stats = await fetchJSON("/stats");
+    document.getElementById("stat-zones").textContent = stats.zones_monitored;
+    document.getElementById("stat-windows").textContent = stats.windows_evaluated;
+    document.getElementById("stat-alerts").textContent = stats.alerts_fired;
+
+    const statusEl = document.getElementById("header-status");
+    statusEl.classList.toggle("demo", !!stats.synthetic_mode);
+    statusText.textContent = stats.synthetic_mode ? "Demo mode" : "Watching";
+
+    const dateInput = document.getElementById("run-date");
+    const submitBtn = document.getElementById("run-btn");
+    document.getElementById("demo-mode-chip").classList.toggle("is-hidden", !stats.synthetic_mode);
+    dateInput.disabled = stats.synthetic_mode;
+    submitBtn.disabled = stats.synthetic_mode;
+  } catch (e) {
+    statusText.textContent = "Error";
+  }
+}
+
+// LDN score coloring, shared by the stats card and the map polygons/markers: green >= 70,
+// amber 40-69, red < 40 - matches app.main's /ldn/summary zones_at_risk threshold (< 40).
+function ldnColorClass(score) {
+  if (score >= 70) return "ldn-green";
+  if (score >= 40) return "ldn-amber";
+  return "ldn-red";
+}
+function ldnBorderColor(ldn) {
+  if (!ldn || typeof ldn.ldn_score !== "number") return "#9aa0a6";
+  if (ldn.ldn_score < 40) return "#dc2626";
+  if (ldn.ldn_score < 70) return "#d97706";
+  return "#2d6a4f";
+}
+function ldnFillColor(ldn) {
+  if (!ldn || typeof ldn.ldn_score !== "number") return "#f1f3f4";
+  if (ldn.ldn_score < 40) return "#fee2e2";
+  if (ldn.ldn_score < 70) return "#fef3c7";
+  return "#d1fae5";
+}
+function ldnFillOpacity(ldn) {
+  if (!ldn || typeof ldn.ldn_score !== "number") return 0.15;
+  if (ldn.ldn_score < 40) return 0.30;
+  if (ldn.ldn_score < 70) return 0.25;
+  return 0.22;
+}
+
+async function loadLdnSummary() {
+  const el = document.getElementById("stat-ldn");
+  try {
+    const summary = await fetchJSON("/ldn/summary");
+    el.textContent = summary.avg_score;
+    el.className = `stat-value big mono ${ldnColorClass(summary.avg_score)}`;
+  } catch (e) {
+    el.textContent = "err";
+  }
+}
+
+// --- Zone map -------------------------------------------------------------
+const TILE_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+const TILE_ATTRIBUTION = "Tiles &copy; Esri, Maxar, Earthstar Geographics";
+
+let map = null;
+const AMAZON_CENTER = [-3.5, -57.5]; // 3 of 5 zones sit in this region - see applyAmazonView()
+const AMAZON_ZOOM = 5;
+let currentMapView = "amazon"; // "amazon" | "global" - toggled by the map's single view button
+const markers = {}; // zone.id -> L.CircleMarker, kept across refreshes so we update, not rebuild
+const reticles = {}; // zone.id -> L.Marker (divIcon reticle), created once per zone, position fixed
+const polygons = {}; // zone.id -> L.Polygon (real AOI geometry), kept across refreshes too
+const polygonStrokes = {}; // zone.id -> L.Polygon, white non-fill outline drawn on top of the
+// color fill for a crisp edge against satellite imagery - see upsertPolygons()
+
+function markerRadius(areaHa) {
+  if (!areaHa) return 5;
+  return Math.max(5, Math.min(24, 5 + Math.sqrt(areaHa) * 1.8));
+}
+
+function popupHtml(zone) {
+  const roleLine = zoneBadge(zone.role);
+  if (!zone.last_detection) {
+    return `<strong>${zone.name}</strong><br/>${roleLine}<br/><em>No detections yet.</em>`;
+  }
+  const d = zone.last_detection;
+  return `
+    <strong>${zone.name}</strong><br/>
+    ${roleLine}<br/>
+    ${d.cause.replace(/_/g, " ")} &middot; <span class="mono">${(d.confidence * 100).toFixed(0)}%</span><br/>
+    ~<span class="mono">${d.area_ha.toFixed(1)}</span> ha<br/>
+    <span class="mono" style="font-size:11px;color:#9aa0a6;">${new Date(d.detected_at).toLocaleString()}</span>
+  `;
+}
+
+// zone.geometry is Zone.aoi_geojson (GeoJSON Polygon, [lon, lat] per ring point per spec) as
+// served by GET /zones - the real AOI every GEE query in this pipeline already uses, not a
+// generated shape. Leaflet wants [lat, lon]; this just flips the outer ring.
+function geoJsonPolygonToLatLngs(geometry) {
+  if (!geometry || geometry.type !== "Polygon" || !geometry.coordinates || !geometry.coordinates[0]) {
+    return null;
+  }
+  return geometry.coordinates[0].map(([lon, lat]) => [lat, lon]);
+}
+
+function initMapIfNeeded(zones) {
+  if (map || !zones.length) return;
+  map = L.map("map");
+  L.tileLayer(TILE_URL, { attribution: TILE_ATTRIBUTION, maxZoom: 17 }).addTo(map);
+  // Subtle white wash over the satellite imagery - light theme, so no dark tint; just keeps the
+  // imagery from reading darker/more saturated than the rest of the page.
+  L.rectangle([[-85, -180], [85, 180]], {
+    color: "transparent",
+    fillColor: "#ffffff",
+    fillOpacity: 0.12,
+    interactive: false,
+  }).addTo(map);
+  applyAmazonView(); // default framing - 3 of 5 zones sit in the Amazon basin
+
+  map.on("zoomend", updateZoneLabelVisibility);
+  loadCountryBoundaries();
+  const hoverLabel = document.getElementById("country-hover-label");
+  let hoverThrottle = null;
+  map.on("mousemove", (e) => {
+    if (hoverThrottle) return; // ~15fps is plenty for a label that just follows the cursor
+    hoverThrottle = setTimeout(() => { hoverThrottle = null; }, 60);
+    const name = findCountryAt(e.latlng.lat, e.latlng.lng);
+    if (!name) {
+      hoverLabel.classList.add("is-hidden");
+      return;
+    }
+    hoverLabel.textContent = name;
+    hoverLabel.style.left = `${e.containerPoint.x + 14}px`;
+    hoverLabel.style.top = `${e.containerPoint.y + 14}px`;
+    hoverLabel.classList.remove("is-hidden");
+  });
+  map.on("mouseout", () => hoverLabel.classList.add("is-hidden"));
+}
+
+// --- Country-name hover lookup ------------------------------------------------------------
+// Esri's satellite tiles carry no queryable metadata (they're just raster imagery), so "what
+// country is under the cursor" needs real boundary polygons client-side - loaded once (Natural
+// Earth's public-domain 110m admin-0 countries, i.e. same source/resolution QGIS and most web
+// maps use for this), then a plain point-in-polygon test on mousemove. No API key, no per-move
+// network call, no rate limit to worry about.
+const COUNTRY_GEOJSON_URL = "https://cdn.jsdelivr.net/gh/nvkelso/natural-earth-vector/geojson/ne_110m_admin_0_countries.geojson";
+let countryFeatures = null; // [{ name, geometry, bbox }], populated once loadCountryBoundaries() resolves
+
+function ringBBox(ring) {
+  let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+  for (const [lng, lat] of ring) {
+    if (lng < minLng) minLng = lng;
+    if (lng > maxLng) maxLng = lng;
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+  }
+  return [minLng, minLat, maxLng, maxLat];
+}
+
+// Standard ray-casting point-in-polygon test against one linear ring (GeoJSON [lng, lat] pairs).
+function pointInRing(lat, lng, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    const crosses = (yi > lat) !== (yj > lat) && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi;
+    if (crosses) inside = !inside;
+  }
+  return inside;
+}
+
+// A point is inside a Polygon/MultiPolygon if it's in some ring[0] (the outer boundary) and not
+// in any of that same polygon's later rings (holes) - e.g. South Africa's Lesotho-shaped hole.
+function pointInGeometry(lat, lng, geometry) {
+  const polygons = geometry.type === "MultiPolygon" ? geometry.coordinates : [geometry.coordinates];
+  for (const rings of polygons) {
+    if (!pointInRing(lat, lng, rings[0])) continue;
+    let inHole = false;
+    for (let h = 1; h < rings.length; h++) {
+      if (pointInRing(lat, lng, rings[h])) { inHole = true; break; }
+    }
+    if (!inHole) return true;
+  }
+  return false;
+}
+
+async function loadCountryBoundaries() {
+  if (countryFeatures) return;
+  try {
+    const geojson = await fetchJSON(COUNTRY_GEOJSON_URL);
+    countryFeatures = geojson.features.map((f) => ({
+      name: f.properties.ADMIN || f.properties.NAME || f.properties.name || "",
+      geometry: f.geometry,
+      bbox: (f.geometry.type === "MultiPolygon" ? f.geometry.coordinates : [f.geometry.coordinates])
+        .map((rings) => ringBBox(rings[0]))
+        .reduce(
+          (acc, [minLng, minLat, maxLng, maxLat]) => [
+            Math.min(acc[0], minLng), Math.min(acc[1], minLat), Math.max(acc[2], maxLng), Math.max(acc[3], maxLat),
+          ],
+          [Infinity, Infinity, -Infinity, -Infinity]
+        ),
+    }));
+  } catch (e) {
+    countryFeatures = []; // hover just stays inert if the boundary data can't be fetched
+  }
+}
+
+function findCountryAt(lat, lng) {
+  if (!countryFeatures) return null;
+  for (const f of countryFeatures) {
+    const [minLng, minLat, maxLng, maxLat] = f.bbox;
+    if (lng < minLng || lng > maxLng || lat < minLat || lat > maxLat) continue;
+    if (pointInGeometry(lat, lng, f.geometry)) return f.name;
+  }
+  return null;
+}
+
+function zoneBounds(zones) {
+  const latLngs = zones
+    .filter((z) => Number.isFinite(z.lat) && Number.isFinite(z.lon))
+    .map((z) => [z.lat, z.lon]);
+  return latLngs.length ? L.latLngBounds(latLngs) : null;
+}
+
+function applyAmazonView() {
+  if (!map) return;
+  map.setView(AMAZON_CENTER, AMAZON_ZOOM);
+}
+
+// Frames the map to the union of all zone polygon bounds (not just their centroid points - a
+// real AOI's extent can matter even though it's tiny at this scale), falling back to
+// centroid-point bounds if a zone somehow has no polygon geometry, then to a world default view
+// if bounds still end up empty/invalid (e.g. called before any zone has loaded).
+function applyGlobalView(zones) {
+  if (!map) return;
+  const polygonLayers = Object.values(polygons);
+  const bounds = polygonLayers.length
+    ? polygonLayers.reduce((acc, p) => acc.extend(p.getBounds()), L.latLngBounds(polygonLayers[0].getBounds()))
+    : zoneBounds(zones || []);
+  if (bounds && bounds.isValid()) {
+    map.fitBounds(bounds, { padding: [80, 80] });
+  } else {
+    map.setView([0, 15], 3);
+  }
+}
+
+// Single button that cycles between the two default framings - label always names the view a
+// click will switch TO (matches the pre-existing "Fit all zones" button's action-label
+// convention), not the view currently showing.
+function toggleMapView(zones) {
+  const btn = document.getElementById("fit-zones-btn");
+  if (currentMapView === "amazon") {
+    applyGlobalView(zones);
+    currentMapView = "global";
+    btn.textContent = "Amazon view";
+  } else {
+    applyAmazonView();
+    currentMapView = "amazon";
+    btn.textContent = "Global view";
+  }
+}
+
+function reticleIcon(color) {
+  return L.divIcon({
+    className: "zone-reticle",
+    html: `<span class="tick tick-n" style="background:${color}"></span><span class="tick tick-s" style="background:${color}"></span><span class="tick tick-e" style="background:${color}"></span><span class="tick tick-w" style="background:${color}"></span>`,
+    iconSize: [0, 0],
+  });
+}
+
+// Zone AOI polygons: real geometry (zone.geometry, from GET /zones). Border and fill are both
+// driven by the zone's LDN score (analysis.ldn.compute_ldn_score via GET /ldn/{id}, fetched
+// per-zone in loadZones() and stashed on zone._ldn) - role is no longer encoded on the map at
+// all, since it would just duplicate the LDN color channel. Added before markers/reticles each
+// refresh so the point markers and reticles draw on top of the polygon fill.
+//
+// Each zone actually draws as two stacked polygons: the color one (fill + role-colored border,
+// weight 2.5) and a second, fill-less white-only outline (weight 1) on top of it - a crisp inner
+// edge that reads clearly against any satellite terrain, not just against a uniform basemap.
+function upsertPolygons(zones) {
+  zones.forEach((zone) => {
+    const latlngs = geoJsonPolygonToLatLngs(zone.geometry);
+    if (!latlngs) return; // no geometry for this zone - skip the polygon, marker still renders
+    const border = ldnBorderColor(zone._ldn);
+    const fill = ldnFillColor(zone._ldn);
+    const opacity = ldnFillOpacity(zone._ldn);
+    let polygon = polygons[zone.id];
+    if (!polygon) {
+      polygon = L.polygon(latlngs, { color: border, weight: 2.5, fillColor: fill, fillOpacity: opacity }).addTo(map);
+      polygon.bindPopup("");
+      polygons[zone.id] = polygon;
+    } else {
+      polygon.setLatLngs(latlngs);
+      polygon.setStyle({ color: border, weight: 2.5, fillColor: fill, fillOpacity: opacity });
+    }
+    polygon.setPopupContent(popupHtml(zone));
+
+    let stroke = polygonStrokes[zone.id];
+    if (!stroke) {
+      stroke = L.polygon(latlngs, { color: "#ffffff", weight: 1, fill: false, interactive: false }).addTo(map);
+      polygonStrokes[zone.id] = stroke;
+    } else {
+      stroke.setLatLngs(latlngs);
+    }
+  });
+}
+
+// Full zone names read as noisy labels on the map ("Kambove Mining Watch · 62"), so the
+// permanent tooltip uses a short form. Explicit map rather than a word-stripping heuristic -
+// only 5 fixed zones exist, and guessing "which trailing word(s) are the category suffix"
+// generically is more likely to get a future zone name wrong than an explicit lookup is.
+const ZONE_SHORT_NAMES = {
+  "Kambove Mining Watch": "Kambove",
+  "Tapajos Logging Corridor": "Tapajos",
+  "Garamba Reference Plot": "Garamba",
+  "Novo Progresso Frontier": "Novo Progresso",
+  "Yanomami Mining Belt": "Yanomami",
+};
+function zoneShortName(name) {
+  return ZONE_SHORT_NAMES[name] || name.split(" ")[0];
+}
+function zoneLabelText(zone) {
+  const score = zone._ldn && typeof zone._ldn.ldn_score === "number" ? zone._ldn.ldn_score : "–";
+  return `${zoneShortName(zone.name)} · ${score}`;
+}
+
+// Permanent zone labels are legible at world/regional zoom, but at zoom >= 8 (polygon-detail
+// range) they'd just clutter the view the polygons themselves are meant to carry - so hide them
+// past that threshold. "Below 6" from the spec is automatically covered since it's a subset of
+// "below 8"; there's no separate behavior defined for the 6-7 gap, so labels simply stay visible
+// there too, only disappearing right at the polygon-detail threshold.
+function updateZoneLabelVisibility() {
+  if (!map) return;
+  const show = map.getZoom() < 8;
+  Object.values(markers).forEach((m) => {
+    if (!m.getTooltip()) return;
+    if (show) m.openTooltip(); else m.closeTooltip();
+  });
+}
+
+function upsertMarkers(zones) {
+  zones.forEach((zone) => {
+    const radius = markerRadius(zone.last_detection ? zone.last_detection.area_ha : null);
+    const color = ldnBorderColor(zone._ldn);
+    let marker = markers[zone.id];
+    if (!marker) {
+      marker = L.circleMarker([zone.lat, zone.lon], {
+        radius, color, fillColor: color, fillOpacity: 0.85, weight: 1,
+      }).addTo(map);
+      marker.bindPopup("");
+      marker.bindTooltip(zoneLabelText(zone), {
+        permanent: true, direction: "right", offset: [12, 0], className: "zone-label-tooltip",
+      });
+      markers[zone.id] = marker;
+    } else {
+      marker.setStyle({ radius, color, fillColor: color });
+      marker.setTooltipContent(zoneLabelText(zone));
+    }
+    marker.setPopupContent(popupHtml(zone));
+
+    if (!reticles[zone.id]) {
+      reticles[zone.id] = L.marker([zone.lat, zone.lon], {
+        icon: reticleIcon(color), interactive: false, keyboard: false, zIndexOffset: -100,
+      }).addTo(map);
+    } else {
+      reticles[zone.id].setIcon(reticleIcon(color));
+    }
+  });
+  updateZoneLabelVisibility(); // new markers default to open; enforce the current zoom's rule
+}
+
+let latestZones = []; // updated at the end of every loadZones() - the click handler below needs
+// a zones array to pass to applyGlobalView()'s centroid-bounds fallback, but the handler itself
+// is registered once at script load, long before any zone data exists.
+document.getElementById("fit-zones-btn").addEventListener("click", () => toggleMapView(latestZones));
+
+// --- Zones (data only - map polygons/markers; no standalone zone-list panel in this layout) --
+async function loadZones() {
+  const zones = await fetchJSON("/zones");
+  const ldnResults = await Promise.all(
+    zones.map((z) => fetchJSON(`/ldn/${z.id}`).catch(() => null))
+  );
+  zones.forEach((z, i) => { z._ldn = ldnResults[i]; });
+  initMapIfNeeded(zones);
+  upsertPolygons(zones);
+  upsertMarkers(zones);
+  latestZones = zones;
+  return zones;
+}
+
+// --- Before/after thumbnails --------------------------------------------------
+// SYNTHETIC_MODE=true: /detections returns before_thumb_url/after_thumb_url as null, and we
+// render our own inline SVG tiles here, purely from `cause` - no imagery is ever pulled.
+// SYNTHETIC_MODE=false: those fields carry real base64 PNG data URIs from gee/thumbnails.py,
+// and we just render them as <img> tags. Either way nothing leaves the page but inline markup.
+const CAUSE_AFTER_COLORS = {
+  mining: "#8b5a3c",
+  logging: "#a08259",
+  ag_expansion: "#6b7a3d",
+  drought: "#8a7a4a",
+  artifact: "#3d6b3a", // same as BEFORE_COLOR -> tile is identical, no visible change
+};
+const BEFORE_COLOR = "#3d6b3a";
+
+function noiseTileSvg(fillColor, seed) {
+  let s = seed || 1;
+  const rand = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
+  let dots = "";
+  for (let i = 0; i < 24; i++) {
+    const x = (rand() * 80).toFixed(1);
+    const y = (rand() * 80).toFixed(1);
+    const r = (0.8 + rand() * 1.4).toFixed(1);
+    const shade = rand() > 0.5 ? "#ffffff" : "#000000";
+    const op = (0.04 + rand() * 0.07).toFixed(2);
+    dots += `<circle cx="${x}" cy="${y}" r="${r}" fill="${shade}" opacity="${op}"/>`;
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 80 80">` +
+    `<rect width="80" height="80" fill="${fillColor}"/>${dots}</svg>`;
+}
+
+function thumbMarkup(d) {
+  let beforeHtml, afterHtml;
+  if (d.before_thumb_url && d.after_thumb_url) {
+    beforeHtml = `<img class="thumb-img" src="${d.before_thumb_url}" width="80" height="80" alt="Before" />`;
+    afterHtml = `<img class="thumb-img" src="${d.after_thumb_url}" width="80" height="80" alt="After" />`;
+  } else {
+    const beforeSvg = noiseTileSvg(BEFORE_COLOR, d.id * 2 + 1);
+    const afterSvg = d.cause === "artifact"
+      ? beforeSvg
+      : noiseTileSvg(CAUSE_AFTER_COLORS[d.cause] || "#8b5a3c", d.id * 2 + 2);
+    beforeHtml = `<div class="thumb-img">${beforeSvg}</div>`;
+    afterHtml = `<div class="thumb-img">${afterSvg}</div>`;
+  }
+  return `
+    <div class="detection-thumbs">
+      <div><div class="thumb-label">30d ago</div>${beforeHtml}</div>
+      <div><div class="thumb-label">now</div>${afterHtml}</div>
+    </div>
+  `;
+}
+
+// Null-safe numeric formatting: any field can arrive as null (viirs_z routinely, when
+// gee.detect.current_viirs() found no VIIRS monthly composite for that zone/month - a real
+// 1-2 month data lag, not an error). Renders "n/a" instead of throwing on null.toFixed(), which
+// would otherwise crash the whole detection-card render, not just the one field.
+function fmtSigned(value, decimals) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "n/a";
+  return `${value >= 0 ? "+" : ""}${value.toFixed(decimals)}`;
+}
+function fmtNum(value, decimals) {
+  if (value === null || value === undefined || Number.isNaN(value)) return "n/a";
+  return value.toFixed(decimals);
+}
+
+// A Detection is a real event worth surfacing in the stream (vs. routine no-change noise -
+// artifact/silent passes with z~0 and no affected area) when it actually flagged an area, or
+// either indicator cleared the same 3-sigma gate gee.detect.detect_candidates() flags on.
+// Filtering happens here in the frontend only - /detections itself is untouched, so any other
+// consumer keeps seeing every row.
+function isEventDetection(d) {
+  const area = typeof d.estimated_area_ha === "number" ? d.estimated_area_ha : 0;
+  const ndviAbs = typeof d.ndvi_z === "number" ? Math.abs(d.ndvi_z) : 0;
+  const bsiAbs = typeof d.bsi_z === "number" ? Math.abs(d.bsi_z) : 0;
+  return area > 0 || ndviAbs > 3 || bsiAbs > 3;
+}
+
+function detectionStatsLine(d) {
+  const ndviAbs = d.ndvi_z === null || d.ndvi_z === undefined ? -Infinity : Math.abs(d.ndvi_z);
+  const bsiAbs = d.bsi_z === null || d.bsi_z === undefined ? -Infinity : Math.abs(d.bsi_z);
+  const driverZ = ndviAbs >= bsiAbs ? d.ndvi_z : d.bsi_z;
+  // carbon_loss_tco2e is null whenever gee.detect couldn't resolve a real baseline/area for
+  // this detection (see analysis/ldn.py) - segment is omitted entirely, never rendered as
+  // "CO2e: null" or "CO2e: NaN".
+  const co2Segment = typeof d.carbon_loss_tco2e === "number" && Number.isFinite(d.carbon_loss_tco2e)
+    ? ` &middot; CO2e ${Math.round(d.carbon_loss_tco2e).toLocaleString()}t`
+    : "";
+  const cause = `<span class="detection-cause">${d.cause.replace(/_/g, " ")}</span>`;
+  return `${cause} &middot; z ${fmtSigned(driverZ, 2)} &middot; ${fmtNum(d.estimated_area_ha, 1)} ha${co2Segment}`;
+}
+
+async function loadDetections() {
+  const detections = await fetchJSON("/detections?limit=10");
+  const el = document.getElementById("detections");
+  const events = detections.filter(isEventDetection);
+  const hiddenCount = detections.length - events.length;
+
+  const cardsHtml = events.length
+    ? events.map(d => `
+      <div class="detection-card">
+        ${thumbMarkup(d)}
+        <div class="detection-body">
+          <div class="detection-head">
+            <strong>Zone #${d.zone_id}</strong>
+            ${detectionChip(d)}
+          </div>
+          ${confRow(d.combined_confidence * 100, d.tier)}
+          <div class="detection-stats mono">${detectionStatsLine(d)}</div>
+          <p class="detection-reasoning">${d.reasoning}</p>
+        </div>
+      </div>
+    `).join("")
+    : `<div class="empty-note">No detections yet.</div>`;
+
+  const hiddenNote = hiddenCount > 0
+    ? `<div id="no-change-note" class="no-change-note mono">${hiddenCount} additional no-change observation${hiddenCount === 1 ? "" : "s"} in silent log &rarr;</div>`
+    : "";
+
+  el.innerHTML = cardsHtml + hiddenNote;
+  document.getElementById("no-change-note")?.addEventListener("click", openSilentLog);
+}
+
+// --- Silent log panel --------------------------------------------------------
+function silentLogCard(entry) {
+  const uncertainTag = entry.tier === "uncertain" ? `<span class="chip chip-uncertain" style="margin-left:.35rem;">uncertain</span>` : "";
+  return `
+    <div class="silent-card">
+      <div class="silent-card-top">
+        <strong>${entry.zone_name}</strong>
+        <span><span class="chip chip-cause">${entry.cause.replace(/_/g, " ")}</span>${uncertainTag}</span>
+      </div>
+      ${confRow(entry.fused_confidence * 100, "silent")}
+      <div class="silent-why">${entry.why_silent}</div>
+      <div class="silent-card-bottom"><span class="silent-timestamp mono">${new Date(entry.created_at).toLocaleString()}</span></div>
+    </div>
+  `;
+}
+
+async function openSilentLog() {
+  const panel = document.getElementById("silent-log-panel");
+  const body = document.getElementById("silent-log-body");
+  panel.classList.remove("hidden");
+  panel.setAttribute("aria-hidden", "false");
+  body.innerHTML = `<div class="empty-note">Loading&hellip;</div>`;
+  try {
+    // Always fetched fresh - no caching, so the panel reflects whatever just ran.
+    const entries = await fetchJSON("/silent-log?limit=50");
+    document.getElementById("silent-log-title").textContent =
+      `Silent log — ${entries.length} entries below threshold`;
+    body.innerHTML = entries.length
+      ? entries.map(silentLogCard).join("")
+      : `<div class="empty-note">Nothing below the gate yet.</div>`;
+  } catch (e) {
+    body.innerHTML = `<div class="empty-note">Error: ${e.message}</div>`;
+  }
+}
+
+function closeSilentLog() {
+  const panel = document.getElementById("silent-log-panel");
+  panel.classList.add("hidden");
+  panel.setAttribute("aria-hidden", "true");
+}
+
+document.getElementById("silent-log-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  openSilentLog();
+});
+document.getElementById("silent-log-close").addEventListener("click", closeSilentLog);
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeSilentLog();
+});
+
+document.addEventListener("click", (e) => {
+  const panel = document.getElementById("silent-log-panel");
+  const link = document.getElementById("silent-log-link");
+  const note = document.getElementById("no-change-note");
+  if (panel.classList.contains("hidden")) return;
+  if (panel.contains(e.target) || link.contains(e.target) || (note && note.contains(e.target))) return;
+  closeSilentLog();
+});
+
+// --- Calibration card ---------------------------------------------------------
+// Static historical-backtest data (scripts/build_calibration.py), not part of the live pipeline
+// loop - fetched once on page load, and again after a successful /run-once. Compact card shows
+// only the first COMPACT_ROW_COUNT windows by default; "View all N windows" swaps in every row.
+const COMPACT_ROW_COUNT = 4;
+let lastCalibrationData = null;
+let calibrationExpanded = false;
+
+function verdictChip(tier) {
+  const cls = tier === "classified" ? "chip-alerted" : `chip-${tier}`;
+  const label = tier === "classified" ? "alerted" : tier;
+  return `<span class="chip ${cls}">${label}</span>`;
+}
+
+function calibrationRowHtml(w) {
+  const month = new Date(`${w.as_of}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", year: "numeric", timeZone: "UTC" });
+  return `
+    <div class="calibration-row">
+      <div class="calibration-row-top">
+        <span class="calibration-zone">${w.zone}</span>
+        ${verdictChip(w.tier)}
+      </div>
+      <div class="calibration-meta">${month} &middot; ${w.z >= 0 ? "+" : ""}${w.z.toFixed(2)}&sigma; &middot; ${w.area_ha.toFixed(0)} ha</div>
+    </div>
+  `;
+}
+
+function renderCalibration(data) {
+  lastCalibrationData = data;
+  const windows = data.windows || [];
+  const summaryEl = document.getElementById("calibration-summary");
+  const carbonLineEl = document.getElementById("calibration-carbon-line");
+  const rowsEl = document.getElementById("calibration-rows");
+  const viewAllEl = document.getElementById("calibration-view-all");
+
+  if (!data.total_windows_tested) {
+    summaryEl.textContent = "No calibration data yet — run: python -m scripts.build_calibration";
+    carbonLineEl.classList.add("is-hidden");
+    viewAllEl.classList.add("is-hidden");
+    rowsEl.innerHTML = "";
+    return;
+  }
+
+  summaryEl.textContent =
+    `${data.total_windows_tested} windows · ${data.total_candidates_flagged} flagged · ${data.total_alerts_fired} alerts`;
+
+  const carbonTotal = data.combined_suppressed_carbon_tco2e;
+  if (typeof carbonTotal === "number" && Number.isFinite(carbonTotal) && carbonTotal > 0) {
+    carbonLineEl.textContent = `Estimated avoided carbon loss: ${Math.round(carbonTotal).toLocaleString()} tCO₂e`;
+    carbonLineEl.classList.remove("is-hidden");
+  } else {
+    carbonLineEl.classList.add("is-hidden");
+  }
+
+  const visibleWindows = calibrationExpanded ? windows : windows.slice(0, COMPACT_ROW_COUNT);
+  rowsEl.innerHTML = visibleWindows.length
+    ? visibleWindows.map(calibrationRowHtml).join("")
+    : `<div class="empty-note">No candidates flagged in this sweep.</div>`;
+
+  if (windows.length > COMPACT_ROW_COUNT) {
+    viewAllEl.classList.remove("is-hidden");
+    viewAllEl.textContent = calibrationExpanded
+      ? "Show fewer ↑"
+      : `View all ${windows.length} flagged candidates →`;
+  } else {
+    viewAllEl.classList.add("is-hidden");
+  }
+}
+
+document.getElementById("calibration-view-all").addEventListener("click", (e) => {
+  e.preventDefault();
+  calibrationExpanded = !calibrationExpanded;
+  if (lastCalibrationData) renderCalibration(lastCalibrationData);
+});
+
+async function loadCalibration() {
+  const summaryEl = document.getElementById("calibration-summary");
+  try {
+    const data = await fetchJSON("/calibration");
+    renderCalibration(data);
+  } catch (e) {
+    summaryEl.textContent = `Error loading calibration data: ${e.message}`;
+  }
+}
+
+async function loadAlerts() {
+  const alerts = await fetchJSON("/alerts?limit=10");
+  const el = document.getElementById("alerts");
+  el.innerHTML = alerts.length
+    ? alerts.map(a => `
+      <div class="alert-row">
+        <div class="alert-meta mono">${new Date(a.sent_at).toLocaleString()} &middot; ${a.channel}</div>
+        <div>${a.message}</div>
+      </div>
+    `).join("")
+    : `<div class="empty-note">No alerts fired yet.</div>`;
+}
+
+async function refreshAll() {
+  await Promise.all([loadZones(), loadDetections(), loadAlerts(), loadLdnSummary()]);
+}
+
+// --- Run-pipeline form --------------------------------------------------------
+// Always calls real Earth Engine for an explicit historical date, chosen by the person running
+// it - not a canned click.
+function defaultRunDate() {
+  const d = new Date();
+  d.setDate(d.getDate() - 30);
+  return d.toISOString().slice(0, 10);
+}
+document.getElementById("run-date").value = defaultRunDate();
+
+document.getElementById("run-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const asOf = document.getElementById("run-date").value;
+  if (!asOf) return;
+
+  const btn = document.getElementById("run-btn");
+  const toast = document.getElementById("run-toast");
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner"></span>Running&hellip;`;
+  toast.classList.add("is-hidden");
+
+  try {
+    const result = await fetchJSON(`/run-once?as_of=${encodeURIComponent(asOf)}`, { method: "POST" });
+    if (result.error) throw new Error(result.error);
+    await Promise.all([loadStats(), refreshAll(), loadCalibration()]);
+  } catch (err) {
+    toast.textContent = `Run failed: ${err.message}. Try a different date.`;
+    toast.classList.remove("is-hidden");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
+});
+
+loadStats();
+refreshAll();
+loadCalibration();
+</script>
+</body>
+</html>
