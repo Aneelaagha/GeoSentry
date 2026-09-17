@@ -22,6 +22,15 @@ recent-detection history — plus an IPCC 2006-default carbon-loss estimate (tCO
 every real detection, so a flagged event reads as an actual climate-relevant quantity,
 not just a z-score.
 
+> **Example, from the actual build.** On 2024-09-15, the pipeline
+> detected 1,835 hectares of canopy loss in Novo Progresso at −5.12σ
+> NDVI. Claude classified the cause as agricultural expansion at 85%
+> confidence, drawing on real-world knowledge of the region as a
+> documented deforestation frontier. Rainfall data independently
+> conflicted, and the fused posterior stayed below the 0.72 gate.
+> **No alert fired.** That refusal is the product — even an 85%-
+> confident LLM classification isn't enough on its own.
+
 ## Architecture
 
 ```
@@ -82,14 +91,6 @@ not just a z-score.
                    calibration · alert log · detection stream · silent log
 ```
 
-**Real-Claude example:** On 2024-09-15 in Novo Progresso, the pipeline detected 1,835 hectares
-of canopy loss at -5.12 sigma NDVI. Claude classified the cause as agricultural expansion at 85%
-confidence, drawing on real-world knowledge of the region as a documented deforestation frontier.
-The rainfall data independently conflicted with that classification, and the fused posterior
-remained below the 0.72 gate. The system stayed silent. This is the product: even an
-85%-confident LLM classification is not sufficient on its own. Independent physical evidence
-must corroborate it.
-
 ## What's real and what's simulated
 
 With `SYNTHETIC_MODE=false` and a real `ANTHROPIC_API_KEY` (verified end-to-end - all four
@@ -108,8 +109,10 @@ everything in the pipeline is real:
 
 `SYNTHETIC_MODE=true` (the default, zero-credential path) swaps GEE/Claude calls for
 deterministic synthetic data keyed off zone name/type, so the same detect → classify → fuse →
-gate pipeline is demoable offline. Every real-path module also falls back to synthetic on any
-credential or API failure, so a flaky network never kills a live demo.
+gate pipeline is demoable offline. With `SYNTHETIC_MODE=false`, that fallback is real but not
+uniform: an LLM API failure is caught and classified synthetically (`llm/classify.py`), while a
+live Earth Engine failure is not — it surfaces as a real error (`POST /run-once` returns
+`{"error": "gee_unavailable"}`) rather than being silently replaced with fabricated output.
 
 ## Quickstart
 
@@ -183,14 +186,18 @@ above; nothing is scripted or hardcoded UI state.
 
 ## Modes
 
+The submitted demo runs with `SYNTHETIC_MODE=false` against real Earth Engine and real
+Claude. The default in `.env.example` is `true` so that a fresh clone can run
+`python scripts/run_once.py` with zero credentials.
+
 - `SYNTHETIC_MODE=true` (default): `gee/*` and `llm/*` return deterministic fake
   data keyed off zone name/type, so the whole pipeline — including the "silent vs.
   alerted" split — is demoable offline with no API keys at all.
 - `SYNTHETIC_MODE=false`: requires `GOOGLE_APPLICATION_CREDENTIALS` (path to a GEE
   service-account key JSON) + `GEE_PROJECT`, and `ANTHROPIC_API_KEY` for real Claude
-  calls (falls back to a deterministic synthetic classifier if unset). Every module
-  still falls back to synthetic behavior on any credential or API failure, so a
-  flaky demo network never kills the presentation.
+  calls. The LLM layer falls back to a deterministic synthetic classifier on API
+  failure. The GEE layer does not — a credential or network failure in `gee/*`
+  surfaces as an error rather than fabricated output.
 
 ## What we'd do with more time
 
