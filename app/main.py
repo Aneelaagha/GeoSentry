@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from contextlib import asynccontextmanager
@@ -466,7 +467,7 @@ def get_ldn_score(zone_id: int) -> dict:
         return compute_ldn_score(zone_id, session)
 
 
-def _run_yanomami_2023_demo() -> dict:
+def _run_yanomami_2023_demo(force: bool = False) -> dict:
     """Demo endpoint: replays a documented 2023 Yanomami garimpo event
     through the full fusion and alerting pipeline. Detection values are
     from a real historical case; every downstream step uses the
@@ -477,9 +478,21 @@ def _run_yanomami_2023_demo() -> dict:
     into fuse_confidence() and classify_alert_tier() (fusion.bayes), then
     scripts.run_once._persist_detection() - the same function real /run-once passes use to commit
     the Detection row and, if it clears the alert gate, fire the real ntfy push (and SMS stub)
-    with the real 7-day zone+cause dedupe."""
+    with the real 7-day zone+cause dedupe.
+
+    force (from /run-once?demo=yanomami-2023&force=true): a fixed demo replay is expected to
+    fire on every click, not just once per DEDUPE_WINDOW_DAYS like a live detection would - so
+    when True, this is passed straight through to _persist_detection()/send_alert(), bypassing
+    alerts.ntfy.recently_alerted() entirely for this call. False (the default) keeps the normal
+    live-run dedupe behavior even on this demo path.
+
+    Also returns "wall_clock_seconds" (float) - same field/meaning as run_once_endpoint's as_of
+    path, timed here rather than by the caller since there's no executor/future wrapping this
+    call the way there is for the real pipeline."""
+    from alerts.ntfy import recently_alerted
     from scripts.run_once import BASE_PRIOR, NON_ALERTING_CAUSES, _persist_detection
 
+    t0 = time.time()
     with Session(engine, expire_on_commit=False) as session:
         zone = session.get(Zone, YANOMAMI_DEMO_ZONE_ID)
         if zone is None:
@@ -522,7 +535,14 @@ def _run_yanomami_2023_demo() -> dict:
             "status": status,
             "tier": tier,
         }
-        detection = _persist_detection(session, zone, result)
+
+        # Computed before persisting - recently_alerted() only looks at existing Alert rows, so
+        # this reflects whatever the dedupe gate would have done for this call. force=True never
+        # even reaches this state (send_alert() skips the check outright), so deduped is always
+        # False in that case, not just "was False this time."
+        deduped = status == "alerted" and not force and recently_alerted(zone.id, d["llm_cause"])
+
+        detection = _persist_detection(session, zone, result, force=force)
         alert = session.exec(select(Alert).where(Alert.detection_id == detection.id)).first()
 
         return {
@@ -532,19 +552,27 @@ def _run_yanomami_2023_demo() -> dict:
             "zone": zone.name,
             "posterior": detection.combined_confidence,
             "demo": "yanomami-2023",
+            "deduped": deduped,
+            "wall_clock_seconds": round(time.time() - t0, 1),
         }
 
 
 @app.post("/run-once")
-def run_once_endpoint(as_of: Optional[str] = None, demo: Optional[str] = None) -> dict:
+def run_once_endpoint(as_of: Optional[str] = None, demo: Optional[str] = None, force: bool = False) -> dict:
     """INPUTS: as_of - 'YYYY-MM-DD', required unless demo is set. demo - optional; the only
     recognized value is 'yanomami-2023', which ignores as_of entirely and instead calls
-    _run_yanomami_2023_demo() (see its docstring) - a fixed, documented historical detection
-    replayed through the real fusion/alerting pipeline, for demoing the alert path without
-    waiting on live Earth Engine + LLM calls. OUTPUTS (as_of path): whatever
-    scripts.run_once.run_once(as_of=...) returns, passed through unchanged - {fired, alert_id,
-    tier, zone, posterior, zones_checked, zones_errored, per_zone} (see that function's
-    docstring for the full field-by-field meaning); {"error": "baseline_missing", "message": ...,
+    _run_yanomami_2023_demo(force=force) (see its docstring) - a fixed, documented historical
+    detection replayed through the real fusion/alerting pipeline, for demoing the alert path
+    without waiting on live Earth Engine + LLM calls. force - optional, only meaningful on the
+    demo path (as_of ignores it entirely, silently): true bypasses alerts.ntfy's 7-day
+    zone+cause dedupe so the demo button fires every click; the response's "deduped" field says
+    whether this call actually would have been/was blocked by that dedupe. OUTPUTS (as_of path):
+    whatever
+    scripts.run_once.run_once(as_of=...) returns, plus a "wall_clock_seconds" float this
+    endpoint adds itself (time actually spent in future.result(), i.e. the real request latency
+    the frontend's result line reports - not a value run_once() computes) - {fired, alert_id,
+    tier, zone, posterior, zones_checked, zones_errored, per_zone, wall_clock_seconds} (see that
+    function's docstring for the rest of the fields' meaning); {"error": "baseline_missing", "message": ...,
     "cached_months": [...], "zones": [...]} immediately, without running anything, if any zone
     lacks a fresh ZoneBaseline for as_of's calendar month (the expensive-if-cold case - see
     gee.baselines.zones_missing_baseline); {"error": "timeout", "message": ...} if the pipeline
@@ -565,7 +593,7 @@ def run_once_endpoint(as_of: Optional[str] = None, demo: Optional[str] = None) -
     drain (shutdown(wait=False)) - the in-flight GEE calls keep running in the background until
     they finish or error, and their results are simply not returned to this request."""
     if demo == "yanomami-2023":
-        return _run_yanomami_2023_demo()
+        return _run_yanomami_2023_demo(force=force)
     if not as_of:
         raise HTTPException(status_code=400, detail="as_of query parameter is required (YYYY-MM-DD).")
     try:
@@ -592,9 +620,12 @@ def run_once_endpoint(as_of: Optional[str] = None, demo: Optional[str] = None) -
     from scripts.run_once import run_once
 
     executor = ThreadPoolExecutor(max_workers=1)
+    t0 = time.time()
     try:
         future = executor.submit(run_once, as_of_date)
-        return future.result(timeout=RUN_ONCE_TIMEOUT_S)
+        result = future.result(timeout=RUN_ONCE_TIMEOUT_S)
+        result["wall_clock_seconds"] = round(time.time() - t0, 1)
+        return result
     except FuturesTimeoutError:
         # Do NOT wait for the executor to finish. Return immediately.
         return {

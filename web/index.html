@@ -92,14 +92,20 @@
     font-size: 12px; color: var(--amber); background: var(--amber-bg); border: 1px solid #fde68a;
     padding: .3rem .65rem; border-radius: 999px; white-space: nowrap;
   }
-  .run-toast {
-    font-size: 12px; color: var(--red); background: var(--red-bg); border: 1px solid #fecaca;
-    padding: .3rem .65rem; border-radius: 999px;
+  .run-result-line {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    width: 100%; box-sizing: border-box; font-family: var(--font-sans); font-size: 12px;
+    padding: 4px 8px; margin: 0 0 .75rem; background: rgba(45, 106, 79, 0.06);
+    border-left: 1px solid var(--accent); color: var(--accent);
+    opacity: 0; transition: opacity 200ms ease;
   }
-  .zone-error-note {
-    flex-basis: 100%; font-size: 12px; color: var(--amber); background: var(--amber-bg);
-    border: 1px solid #fde68a; border-radius: 6px; padding: .35rem .7rem;
+  .run-result-line.is-visible { opacity: 1; }
+  .run-result-line.warn { background: rgba(217, 119, 6, 0.08); border-left-color: var(--amber); color: var(--amber); }
+  .run-result-dismiss {
+    background: none; border: none; cursor: pointer; font-size: 14px; line-height: 1;
+    color: inherit; padding: 0 2px; flex: none; opacity: .6;
   }
+  .run-result-dismiss:hover { opacity: 1; }
   .spinner {
     display: inline-block; width: 9px; height: 9px; border-radius: 50%;
     border: 2px solid rgba(255, 255, 255, .4); border-top-color: #fff;
@@ -325,9 +331,12 @@
       </form>
       <button type="button" id="demo-alert-btn" class="run-submit demo-alert-btn">Demo: replay Yanomami 2023</button>
       <span id="demo-mode-chip" class="demo-chip is-hidden">Demo mode &mdash; live runs disabled</span>
-      <span id="run-toast" class="run-toast is-hidden"></span>
     </div>
-    <div id="zone-error-note" class="zone-error-note is-hidden"></div>
+  </div>
+
+  <div id="run-result-line" class="run-result-line is-hidden">
+    <span id="run-result-text"></span>
+    <button type="button" id="run-result-dismiss" class="run-result-dismiss" aria-label="Dismiss">&times;</button>
   </div>
 
   <div class="dashboard">
@@ -1129,6 +1138,55 @@ async function refreshAll() {
   await Promise.all([loadZones(), loadDetections(), loadAlerts(), loadLdnSummary()]);
 }
 
+// --- Run-result line -------------------------------------------------------------
+// A quiet, persistent confirmation under the header - appears after a run and stays until the
+// next run replaces it, or the user dismisses it. Not a toast: no timer, no auto-dismiss.
+function showRunResult(text, isWarn) {
+  const line = document.getElementById("run-result-line");
+  document.getElementById("run-result-text").textContent = text;
+  line.classList.toggle("warn", !!isWarn);
+  line.classList.remove("is-hidden");
+  line.classList.remove("is-visible");
+  void line.offsetWidth; // force a reflow so the opacity transition below actually plays
+  line.classList.add("is-visible");
+}
+
+document.getElementById("run-result-dismiss").addEventListener("click", () => {
+  document.getElementById("run-result-line").classList.add("is-hidden");
+});
+
+function formatRunFailure(message) {
+  return message.endsWith(".")
+    ? `⚠ Run failed — ${message}`
+    : `⚠ Run failed — ${message}. Try a different date.`;
+}
+
+// zones_checked/zones_errored/per_zone/wall_clock_seconds all come straight from
+// scripts.run_once.run_once()'s summary dict (app.main's /run-once passes it through
+// unchanged) - alerts_fired is derived here from per_zone rather than being its own field,
+// since per_zone already has each zone's final status.
+function formatRunResult(result) {
+  const zonesChecked = result.zones_checked || 0;
+  const errored = (result.zones_errored || []).length;
+  const alertsFired = (result.per_zone || []).filter((z) => z.status === "alerted").length;
+  const zonesPart = errored > 0
+    ? `${zonesChecked} of ${zonesChecked + errored} zones checked`
+    : `${zonesChecked} zones checked`;
+  const alertWord = alertsFired === 1 ? "alert" : "alerts";
+  const erroredSuffix = errored > 0 ? ` (${errored} errored)` : "";
+  return `✓ Run complete — ${zonesPart}, ${alertsFired} ${alertWord} fired, ${result.wall_clock_seconds}s${erroredSuffix}`;
+}
+
+// alert_id is only non-null when this specific call actually sent a new ntfy push (null when
+// deduped) - a more honest "did an alert fire just now" signal than the demo's "fired" field,
+// which reflects the detection's classification tier regardless of whether force/dedupe let a
+// new notification through.
+function formatDemoResult(result) {
+  const alertsFired = result.alert_id !== null && result.alert_id !== undefined ? 1 : 0;
+  const alertWord = alertsFired === 1 ? "alert" : "alerts";
+  return `✓ Run complete — Yanomami 2023 replay, ${alertsFired} ${alertWord} fired, ${result.wall_clock_seconds}s`;
+}
+
 // --- Run-pipeline form --------------------------------------------------------
 // Always calls real Earth Engine for an explicit historical date, chosen by the person running
 // it - not a canned click.
@@ -1145,33 +1203,17 @@ document.getElementById("run-form").addEventListener("submit", async (e) => {
   if (!asOf) return;
 
   const btn = document.getElementById("run-btn");
-  const toast = document.getElementById("run-toast");
-  const zoneErrorNote = document.getElementById("zone-error-note");
   const originalLabel = btn.textContent;
   btn.disabled = true;
   btn.innerHTML = `<span class="spinner"></span>Running&hellip; (up to 2 min)`;
-  toast.classList.add("is-hidden");
-  zoneErrorNote.classList.add("is-hidden");
 
   try {
     const result = await fetchJSON(`/run-once?as_of=${encodeURIComponent(asOf)}`, { method: "POST" });
     if (result.error) throw new Error(result.message || result.error);
     await Promise.all([loadStats(), refreshAll(), loadCalibration()]);
-
-    // zones_errored/zones_checked only exist on the real run_once() summary shape (not on
-    // /run-once's baseline_missing/timeout/gee_unavailable error returns, which throw above).
-    if (result.zones_errored && result.zones_errored.length > 0) {
-      const errored = result.zones_errored.length;
-      const total = errored + (result.zones_checked || 0);
-      const zoneWord = errored === 1 ? "zone" : "zones";
-      zoneErrorNote.textContent =
-        `${errored} of ${total} ${zoneWord} errored — see server log. ` +
-        `Other ${result.zones_checked} checked normally.`;
-      zoneErrorNote.classList.remove("is-hidden");
-    }
+    showRunResult(formatRunResult(result), false);
   } catch (err) {
-    toast.textContent = err.message.endsWith(".") ? `Run failed: ${err.message}` : `Run failed: ${err.message}. Try a different date.`;
-    toast.classList.remove("is-hidden");
+    showRunResult(formatRunFailure(err.message), true);
   } finally {
     btn.disabled = false;
     btn.textContent = originalLabel;
@@ -1181,22 +1223,22 @@ document.getElementById("run-form").addEventListener("submit", async (e) => {
 // --- Demo alert button ---------------------------------------------------------
 // Replays a documented 2023 Yanomami garimpo event through the real fusion/alerting pipeline
 // (app.main._run_yanomami_2023_demo) - fixed historical detection values, no live EE/LLM calls,
-// so it resolves instantly and reliably fires the alert path for a demo.
+// so it resolves instantly and reliably fires the alert path for a demo. Always passes
+// force=true so repeat clicks fire every time - unlike a live detection, a demo replay button
+// should never go quiet just because alerts.ntfy's 7-day zone+cause dedupe already saw it once.
 document.getElementById("demo-alert-btn").addEventListener("click", async () => {
   const btn = document.getElementById("demo-alert-btn");
-  const toast = document.getElementById("run-toast");
   const originalLabel = btn.textContent;
   btn.disabled = true;
   btn.innerHTML = `<span class="spinner"></span>Replaying&hellip;`;
-  toast.classList.add("is-hidden");
 
   try {
-    const result = await fetchJSON("/run-once?demo=yanomami-2023", { method: "POST" });
+    const result = await fetchJSON("/run-once?demo=yanomami-2023&force=true", { method: "POST" });
     if (result.error) throw new Error(result.message || result.error);
     await Promise.all([loadStats(), refreshAll(), loadCalibration()]);
+    showRunResult(formatDemoResult(result), false);
   } catch (err) {
-    toast.textContent = `Demo failed: ${err.message}`;
-    toast.classList.remove("is-hidden");
+    showRunResult(formatRunFailure(err.message), true);
   } finally {
     btn.disabled = false;
     btn.textContent = originalLabel;

@@ -138,19 +138,23 @@ def _classify_and_fuse(
     }
 
 
-def _persist_detection(session: Session, zone: Zone, result: dict) -> Detection:
+def _persist_detection(session: Session, zone: Zone, result: dict, force: bool = False) -> Detection:
     """INPUTS: a Session (always the main thread's - see run_once()), the Zone the result
-    belongs to, a dict from _classify_and_fuse(). OUTPUTS: the persisted Detection row. Builds +
-    commits the Detection row, then fires an alert (ntfy + SMS stub) if status == 'alerted' and
-    this zone+cause hasn't already alerted within alerts.ntfy.DEDUPE_WINDOW_DAYS. This is the
-    DB-writing half of the old single _finalize_detection() - kept off worker threads so SQLite
-    only ever sees one writer for the Detection/Alert tables at a time (see app.db.engine's
-    SQLite busy-timeout comment for the one place that still isn't true: detect_candidates()'s
-    ZoneBaseline cache read/write, which necessarily happens on each zone's own worker thread).
-    Also spawns background Sentinel-2 thumbnail generation for the new row (gee.thumbnails) -
-    submitted to a shared executor and returned from immediately, so this never waits on real
-    GEE network calls; a no-op under SYNTHETIC_MODE, where the frontend renders its own inline
-    SVG tiles instead."""
+    belongs to, a dict from _classify_and_fuse(), and force (default False) - passed straight
+    through to alerts.ntfy.send_alert(); when True, bypasses the recently_alerted() dedupe
+    entirely so the alert always fires. Only app.main's demo replay endpoint
+    (/run-once?demo=yanomami-2023&force=true) ever passes True; every live run_once() pass here
+    uses the default, so the 7-day zone+cause dedupe is unchanged for them. OUTPUTS: the
+    persisted Detection row. Builds + commits the Detection row, then fires an alert (ntfy + SMS
+    stub) if status == 'alerted' and (this zone+cause hasn't already alerted within
+    alerts.ntfy.DEDUPE_WINDOW_DAYS, or force is True). This is the DB-writing half of the old
+    single _finalize_detection() - kept off worker threads so SQLite only ever sees one writer
+    for the Detection/Alert tables at a time (see app.db.engine's SQLite busy-timeout comment for
+    the one place that still isn't true: detect_candidates()'s ZoneBaseline cache read/write,
+    which necessarily happens on each zone's own worker thread). Also spawns background
+    Sentinel-2 thumbnail generation for the new row (gee.thumbnails) - submitted to a shared
+    executor and returned from immediately, so this never waits on real GEE network calls; a
+    no-op under SYNTHETIC_MODE, where the frontend renders its own inline SVG tiles instead."""
     detection = Detection(
         zone_id=zone.id,
         ndvi_z=result["ndvi_delta"],
@@ -188,6 +192,7 @@ def _persist_detection(session: Session, zone: Zone, result: dict) -> Detection:
             tier=result["tier"],
             llm_conf=result["cause_confidence"],
             carbon_loss_tco2e=result["carbon_loss_tco2e"],
+            force=force,
         )
         if sent:
             message = build_alert_message(

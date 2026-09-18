@@ -123,15 +123,20 @@ def send_alert(
     llm_conf: float = 0.0,
     topic: str | None = None,
     carbon_loss_tco2e: float | None = None,
+    force: bool = False,
 ) -> bool:
     """INPUTS: the zone's id/name, the fired Detection's cause, fused confidence, and indicator
     values; tier ('classified' or 'uncertain') and llm_conf (only used when tier='uncertain'),
     carbon_loss_tco2e - all passed straight through to build_alert_message(); optional ntfy topic
-    override (defaults to settings.ntfy_topic). OUTPUTS: bool - True if an alert was actually
-    POSTed to ntfy.sh; False if it was skipped as a duplicate (same zone+cause alerted within
-    DEDUPE_WINDOW_DAYS) or the POST failed. Never raises: a flaky network connection can't crash
-    the demo."""
-    if recently_alerted(zone_id, cause):
+    override (defaults to settings.ntfy_topic); force - when True, skips the recently_alerted()
+    dedupe check entirely and always POSTs. Only app.main's demo replay endpoint
+    (/run-once?demo=yanomami-2023&force=true) ever sets this - a fixed demo replay is expected
+    to fire every click, not just once per DEDUPE_WINDOW_DAYS. Every live /run-once and CLI pass
+    calls this with force's default (False), so the 7-day zone+cause dedupe is unchanged for
+    them. OUTPUTS: bool - True if an alert was actually POSTed to ntfy.sh; False if it was
+    skipped as a duplicate (same zone+cause alerted within DEDUPE_WINDOW_DAYS, and force wasn't
+    set) or the POST failed. Never raises: a flaky network connection can't crash the demo."""
+    if not force and recently_alerted(zone_id, cause):
         logger.info(
             "Skipping duplicate alert: zone '%s' already alerted for cause '%s' within the last %d days.",
             zone_name,
