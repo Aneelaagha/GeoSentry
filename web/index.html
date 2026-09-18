@@ -86,6 +86,8 @@
   }
   .run-submit:hover:not(:disabled) { background: #235942; }
   .run-submit:disabled { background: #e8eaed; color: var(--text-muted); cursor: not-allowed; }
+  .demo-alert-btn { background: var(--amber); }
+  .demo-alert-btn:hover:not(:disabled) { background: #b45309; }
   .demo-chip {
     font-size: 12px; color: var(--amber); background: var(--amber-bg); border: 1px solid #fde68a;
     padding: .3rem .65rem; border-radius: 999px; white-space: nowrap;
@@ -93,6 +95,10 @@
   .run-toast {
     font-size: 12px; color: var(--red); background: var(--red-bg); border: 1px solid #fecaca;
     padding: .3rem .65rem; border-radius: 999px;
+  }
+  .zone-error-note {
+    flex-basis: 100%; font-size: 12px; color: var(--amber); background: var(--amber-bg);
+    border: 1px solid #fde68a; border-radius: 6px; padding: .35rem .7rem;
   }
   .spinner {
     display: inline-block; width: 9px; height: 9px; border-radius: 50%;
@@ -234,6 +240,11 @@
   }
   div.thumb-img svg { display: block; width: 80px; height: 80px; }
   .thumb-label { font-size: 9px; color: var(--text-muted); margin-top: 3px; text-align: center; font-family: var(--font-mono); }
+  .thumb-placeholder {
+    width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+    background: var(--border); color: var(--text-muted); font-size: 8px; font-family: var(--font-mono);
+    text-align: center; line-height: 1.3; padding: 4px; box-sizing: border-box;
+  }
   .detection-body { flex: 1; min-width: 0; }
   .detection-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
   .detection-head strong { font-size: 14px; font-weight: 600; color: var(--text); }
@@ -312,9 +323,11 @@
         <input type="date" id="run-date" class="run-date-input mono" />
         <button type="submit" id="run-btn" class="run-submit">Run pipeline &rarr;</button>
       </form>
+      <button type="button" id="demo-alert-btn" class="run-submit demo-alert-btn">Demo: replay Yanomami 2023</button>
       <span id="demo-mode-chip" class="demo-chip is-hidden">Demo mode &mdash; live runs disabled</span>
       <span id="run-toast" class="run-toast is-hidden"></span>
     </div>
+    <div id="zone-error-note" class="zone-error-note is-hidden"></div>
   </div>
 
   <div class="dashboard">
@@ -393,6 +406,10 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
+let SYNTHETIC_MODE = false; // set from /stats in loadStats() - thumbMarkup() uses this to tell
+// "SYNTHETIC_MODE's own decorative SVG tiles" apart from "real mode, cached thumbnail not ready
+// yet" (both show up as before_thumb_url/after_thumb_url === null on the wire).
+
 async function fetchJSON(path, options) {
   const res = await fetch(path, options);
   if (!res.ok) throw new Error(`${path} -> ${res.status}`);
@@ -430,6 +447,7 @@ async function loadStats() {
   const statusText = document.getElementById("status-text");
   try {
     const stats = await fetchJSON("/stats");
+    SYNTHETIC_MODE = !!stats.synthetic_mode;
     document.getElementById("stat-zones").textContent = stats.zones_monitored;
     document.getElementById("stat-windows").textContent = stats.windows_evaluated;
     document.getElementById("stat-alerts").textContent = stats.alerts_fired;
@@ -815,10 +833,14 @@ async function loadZones() {
 }
 
 // --- Before/after thumbnails --------------------------------------------------
-// SYNTHETIC_MODE=true: /detections returns before_thumb_url/after_thumb_url as null, and we
-// render our own inline SVG tiles here, purely from `cause` - no imagery is ever pulled.
-// SYNTHETIC_MODE=false: those fields carry real base64 PNG data URIs from gee/thumbnails.py,
-// and we just render them as <img> tags. Either way nothing leaves the page but inline markup.
+// SYNTHETIC_MODE=true: /detections returns before_thumb_url/after_thumb_url as null (always -
+// this mode never has cached files), and we render our own inline SVG tiles here, purely from
+// `cause` - no imagery is ever pulled.
+// SYNTHETIC_MODE=false: those fields carry '/static/thumbnails/...' URLs once
+// gee/thumbnails.py's background cache has generated them - real S2 crops served as plain <img>
+// tags. Until then (generation still in flight, or a previous attempt failed) they're null too,
+// which renders a small gray "generating..." placeholder instead of the synthetic-mode SVG -
+// a real thumbnail that isn't ready yet reads very differently from a deliberately synthetic one.
 const CAUSE_AFTER_COLORS = {
   mining: "#8b5a3c",
   logging: "#a08259",
@@ -849,13 +871,23 @@ function thumbMarkup(d) {
   if (d.before_thumb_url && d.after_thumb_url) {
     beforeHtml = `<img class="thumb-img" src="${d.before_thumb_url}" width="80" height="80" alt="Before" />`;
     afterHtml = `<img class="thumb-img" src="${d.after_thumb_url}" width="80" height="80" alt="After" />`;
-  } else {
+  } else if (SYNTHETIC_MODE) {
     const beforeSvg = noiseTileSvg(BEFORE_COLOR, d.id * 2 + 1);
     const afterSvg = d.cause === "artifact"
       ? beforeSvg
       : noiseTileSvg(CAUSE_AFTER_COLORS[d.cause] || "#8b5a3c", d.id * 2 + 2);
     beforeHtml = `<div class="thumb-img">${beforeSvg}</div>`;
     afterHtml = `<div class="thumb-img">${afterSvg}</div>`;
+  } else {
+    // Real mode, cached thumbnail(s) not ready yet - generation runs in the background
+    // (gee.thumbnails) and this row will pick up the real image on the next refresh.
+    const placeholder = `<div class="thumb-img"><div class="thumb-placeholder">generating&hellip;</div></div>`;
+    beforeHtml = d.before_thumb_url
+      ? `<img class="thumb-img" src="${d.before_thumb_url}" width="80" height="80" alt="Before" />`
+      : placeholder;
+    afterHtml = d.after_thumb_url
+      ? `<img class="thumb-img" src="${d.after_thumb_url}" width="80" height="80" alt="After" />`
+      : placeholder;
   }
   return `
     <div class="detection-thumbs">
@@ -1114,17 +1146,56 @@ document.getElementById("run-form").addEventListener("submit", async (e) => {
 
   const btn = document.getElementById("run-btn");
   const toast = document.getElementById("run-toast");
+  const zoneErrorNote = document.getElementById("zone-error-note");
   const originalLabel = btn.textContent;
   btn.disabled = true;
-  btn.innerHTML = `<span class="spinner"></span>Running&hellip;`;
+  btn.innerHTML = `<span class="spinner"></span>Running&hellip; (up to 2 min)`;
   toast.classList.add("is-hidden");
+  zoneErrorNote.classList.add("is-hidden");
 
   try {
     const result = await fetchJSON(`/run-once?as_of=${encodeURIComponent(asOf)}`, { method: "POST" });
-    if (result.error) throw new Error(result.error);
+    if (result.error) throw new Error(result.message || result.error);
+    await Promise.all([loadStats(), refreshAll(), loadCalibration()]);
+
+    // zones_errored/zones_checked only exist on the real run_once() summary shape (not on
+    // /run-once's baseline_missing/timeout/gee_unavailable error returns, which throw above).
+    if (result.zones_errored && result.zones_errored.length > 0) {
+      const errored = result.zones_errored.length;
+      const total = errored + (result.zones_checked || 0);
+      const zoneWord = errored === 1 ? "zone" : "zones";
+      zoneErrorNote.textContent =
+        `${errored} of ${total} ${zoneWord} errored — see server log. ` +
+        `Other ${result.zones_checked} checked normally.`;
+      zoneErrorNote.classList.remove("is-hidden");
+    }
+  } catch (err) {
+    toast.textContent = err.message.endsWith(".") ? `Run failed: ${err.message}` : `Run failed: ${err.message}. Try a different date.`;
+    toast.classList.remove("is-hidden");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+  }
+});
+
+// --- Demo alert button ---------------------------------------------------------
+// Replays a documented 2023 Yanomami garimpo event through the real fusion/alerting pipeline
+// (app.main._run_yanomami_2023_demo) - fixed historical detection values, no live EE/LLM calls,
+// so it resolves instantly and reliably fires the alert path for a demo.
+document.getElementById("demo-alert-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("demo-alert-btn");
+  const toast = document.getElementById("run-toast");
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner"></span>Replaying&hellip;`;
+  toast.classList.add("is-hidden");
+
+  try {
+    const result = await fetchJSON("/run-once?demo=yanomami-2023", { method: "POST" });
+    if (result.error) throw new Error(result.message || result.error);
     await Promise.all([loadStats(), refreshAll(), loadCalibration()]);
   } catch (err) {
-    toast.textContent = `Run failed: ${err.message}. Try a different date.`;
+    toast.textContent = `Demo failed: ${err.message}`;
     toast.classList.remove("is-hidden");
   } finally {
     btn.disabled = false;

@@ -4,3 +4,5 @@ __pycache__/
 .env
 *.db
 secrets/
+.claude/
+static/thumbnails/*.png

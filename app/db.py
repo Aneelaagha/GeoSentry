@@ -93,7 +93,13 @@ class Alert(SQLModel, table=True):
     sent_at: datetime = Field(default_factory=datetime.utcnow)
 
 
-engine = create_engine(settings.database_url, echo=False)
+# timeout=30: scripts.run_once now opens one Session per zone concurrently (see its
+# ThreadPoolExecutor-based zone parallelism), so SQLite briefly sees more than one writer at a
+# time. SQLite itself still serializes actual writes; this just tells a thread to wait up to 30s
+# for the file lock instead of failing immediately with "database is locked". Ignored by other
+# backends.
+_connect_args = {"timeout": 30} if settings.database_url.startswith("sqlite") else {}
+engine = create_engine(settings.database_url, echo=False, connect_args=_connect_args)
 
 
 def init_db() -> None:

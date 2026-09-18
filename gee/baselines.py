@@ -340,3 +340,43 @@ def get_or_compute_baseline(zone: Zone, calendar_month: int, indicator: str, db:
     db.commit()
     db.refresh(row)
     return row
+
+
+def zones_missing_baseline(zones: list[Zone], calendar_month: int, db: Session) -> list[str]:
+    """INPUTS: zones an upcoming run would process, the calendar month the run's as_of falls in,
+    DB session. OUTPUTS: names of zones that do NOT have a fresh (<=BASELINE_CACHE_DAYS old)
+    ZoneBaseline row for both 'ndvi' and 'bsi' - the two indicators gee.detect.detect_candidates()
+    always needs before it can flag anything, so a zone missing either one is exactly a zone that
+    would fall through to get_or_compute_baseline()'s expensive from-scratch path (pooling 3 years
+    of Sentinel-2 imagery per pixel) if the run went ahead. Used by app.main's /run-once to fail
+    fast with a clear message instead of quietly eating the whole request timeout budget on a cold
+    baseline. Doesn't check 'viirs' - that baseline is only ever fetched once a zone is actually
+    flagged, so its absence never costs a full run."""
+    cutoff = datetime.utcnow() - timedelta(days=BASELINE_CACHE_DAYS)
+    missing = []
+    for zone in zones:
+        fresh_indicators = {
+            row.indicator
+            for row in db.exec(
+                select(ZoneBaseline).where(
+                    ZoneBaseline.zone_id == zone.id,
+                    ZoneBaseline.calendar_month == calendar_month,
+                    ZoneBaseline.computed_at >= cutoff,
+                )
+            ).all()
+        }
+        if not {"ndvi", "bsi"}.issubset(fresh_indicators):
+            missing.append(zone.name)
+    return missing
+
+
+def cached_baseline_months(db: Session) -> list[int]:
+    """INPUTS: DB session. OUTPUTS: sorted distinct calendar months (1-12) that currently have at
+    least one fresh (<=BASELINE_CACHE_DAYS old) ZoneBaseline row - a quick "what's ready" hint for
+    a zones_missing_baseline() error response. Not scoped to a particular zone or indicator; it
+    only tells you a month has SOME cached baseline, not that every zone is covered for it."""
+    cutoff = datetime.utcnow() - timedelta(days=BASELINE_CACHE_DAYS)
+    months = db.exec(
+        select(ZoneBaseline.calendar_month).where(ZoneBaseline.computed_at >= cutoff).distinct()
+    ).all()
+    return sorted(set(months))
