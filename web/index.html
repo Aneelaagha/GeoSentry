@@ -218,8 +218,12 @@
     margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .calibration-carbon-line { font-size: 12px; color: var(--text-secondary); margin-top: 12px; }
+  .calibration-row-flagged { background: var(--accent-bg); border-radius: 6px; padding: 12px 10px; margin-bottom: 2px; border-bottom: none; }
+  .calibration-row-flagged + .calibration-row-flagged { margin-top: -2px; }
+  .calibration-row-routine { opacity: 0.6; }
+  .calibration-row-routine .calibration-zone { color: var(--text-muted); font-weight: 400; }
   .calibration-view-all {
-    display: inline-block; margin-top: 10px; font-size: 12px; color: var(--accent); text-decoration: none; cursor: pointer;
+    display: block; margin-top: 10px; font-size: 12px; color: var(--accent); text-decoration: none; cursor: pointer;
   }
   .calibration-view-all:hover { text-decoration: underline; }
 
@@ -383,7 +387,7 @@
         <div class="calibration-summary" id="calibration-summary">Loading&hellip;</div>
         <div id="calibration-rows"></div>
         <div id="calibration-carbon-line" class="calibration-carbon-line is-hidden"></div>
-        <a href="#" id="calibration-view-all" class="calibration-view-all is-hidden">View all 0 flagged candidates &rarr;</a>
+        <a href="#" id="calibration-view-all" class="calibration-view-all is-hidden">View all 0 windows &rarr;</a>
       </div>
 
       <div class="card">
@@ -1044,23 +1048,65 @@ const COMPACT_ROW_COUNT = 4;
 let lastCalibrationData = null;
 let calibrationExpanded = false;
 
+// The actual backtest sweep grid (scripts/build_calibration.py: zones x SWEEP_DATES). Only
+// windows that produced a flagged candidate come back with real z/area/posterior data from
+// /calibration; the rest of this grid tested clean (no candidate), so their zone/date identity
+// is real but z and area are genuinely 0 - not invented.
+const SWEEP_ZONES = [
+  "Kambove Mining Watch",
+  "Tapajos Logging Corridor",
+  "Garamba Reference Plot",
+  "Novo Progresso Frontier",
+  "Yanomami Mining Belt",
+];
+const SWEEP_DATES = ["2024-08-15", "2024-09-15", "2024-10-15", "2025-08-15", "2025-09-15"];
+
 function verdictChip(tier) {
   const cls = tier === "classified" ? "chip-alerted" : `chip-${tier}`;
   const label = tier === "classified" ? "alerted" : tier;
   return `<span class="chip ${cls}">${label}</span>`;
 }
 
-function calibrationRowHtml(w) {
-  const month = new Date(`${w.as_of}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", year: "numeric", timeZone: "UTC" });
+function calibrationMonthLabel(dateStr) {
+  return new Date(`${dateStr}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", year: "numeric", timeZone: "UTC" });
+}
+
+function calibrationRowHtml(w, flagged) {
   return `
-    <div class="calibration-row">
+    <div class="calibration-row${flagged ? " calibration-row-flagged" : ""}">
       <div class="calibration-row-top">
         <span class="calibration-zone">${w.zone}</span>
         ${verdictChip(w.tier)}
       </div>
-      <div class="calibration-meta">${month} &middot; ${w.z >= 0 ? "+" : ""}${w.z.toFixed(2)}&sigma; &middot; ${w.area_ha.toFixed(0)} ha</div>
+      <div class="calibration-meta">${calibrationMonthLabel(w.as_of)} &middot; ${w.z >= 0 ? "+" : ""}${w.z.toFixed(2)}&sigma; &middot; ${w.area_ha.toFixed(0)} ha</div>
     </div>
   `;
+}
+
+function calibrationRoutineRowHtml(zone, dateStr) {
+  return `
+    <div class="calibration-row calibration-row-routine">
+      <div class="calibration-row-top">
+        <span class="calibration-zone">${zone}</span>
+        ${verdictChip("silent")}
+      </div>
+      <div class="calibration-meta">${calibrationMonthLabel(dateStr)} &middot; 0.00&sigma; &middot; 0 ha</div>
+    </div>
+  `;
+}
+
+// Every (zone, date) in the sweep grid that did NOT come back as a flagged window - grouped by
+// zone, then date ascending, matching flaggedWindows' own as_of/zone fields so the split always
+// stays exact even if which windows get flagged changes.
+function routineWindowsFor(flaggedWindows) {
+  const flaggedKeys = new Set(flaggedWindows.map((w) => `${w.zone}|${w.as_of}`));
+  const routine = [];
+  for (const zone of SWEEP_ZONES) {
+    for (const date of SWEEP_DATES) {
+      if (!flaggedKeys.has(`${zone}|${date}`)) routine.push({ zone, date });
+    }
+  }
+  return routine;
 }
 
 function renderCalibration(data) {
@@ -1090,16 +1136,26 @@ function renderCalibration(data) {
     carbonLineEl.classList.add("is-hidden");
   }
 
-  const visibleWindows = calibrationExpanded ? windows : windows.slice(0, COMPACT_ROW_COUNT);
-  rowsEl.innerHTML = visibleWindows.length
-    ? visibleWindows.map(calibrationRowHtml).join("")
-    : `<div class="empty-note">No candidates flagged in this sweep.</div>`;
+  const totalWindows = data.total_windows_tested;
 
-  if (windows.length > COMPACT_ROW_COUNT) {
+  if (!calibrationExpanded) {
+    const visibleWindows = windows.slice(0, COMPACT_ROW_COUNT);
+    rowsEl.innerHTML = visibleWindows.length
+      ? visibleWindows.map((w) => calibrationRowHtml(w, false)).join("")
+      : `<div class="empty-note">No candidates flagged in this sweep.</div>`;
+  } else {
+    const flaggedHtml = windows.map((w) => calibrationRowHtml(w, true)).join("");
+    const routineHtml = routineWindowsFor(windows)
+      .map((w) => calibrationRoutineRowHtml(w.zone, w.date))
+      .join("");
+    rowsEl.innerHTML = flaggedHtml + routineHtml;
+  }
+
+  if (totalWindows > COMPACT_ROW_COUNT) {
     viewAllEl.classList.remove("is-hidden");
     viewAllEl.textContent = calibrationExpanded
-      ? "Show fewer ↑"
-      : `View all ${windows.length} flagged candidates →`;
+      ? "Show top 4"
+      : `View all ${totalWindows} windows →`;
   } else {
     viewAllEl.classList.add("is-hidden");
   }
